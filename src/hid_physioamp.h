@@ -86,13 +86,21 @@
 #define PA_MODE_SIGNAL         1        // MODE_SIGNAL, the power-up default
 
 // --- per mode data characteristics ------------------------------------------
-// signal:    ADC_Read12bit (raw10 << 4, 12 significant bits left aligned into
-//            the 16 bit word), one frame every 10ms, 30 samples per frame
-// impedance: ADC_Read16bit (raw10 << 5), one frame every 30ms. The six protocol
-//            channels are one and the same signal read through six different
-//            phase delays, so an impedance frame is not a plain time series and
-//            cannot be fed to the EEG channel unchanged.
-#define PA_RESOLUTION_SIGNAL       12
+// signal:    one frame every 10ms, 30 samples per frame, 3000 samples/sec
+// impedance: one frame every 30ms. The six protocol channels are one and the
+//            same signal read through six different phase delays, so an
+//            impedance frame is not a plain time series and cannot be fed into
+//            the EEG channel unchanged.
+//
+// The samples are full width ADC codes, not a 12 bit range: the reference host
+// reads them as 16 bit values (ADC_MAX_VALUE 65535) and measured codes from both
+// the original unit and the clone run into the tens of thousands, well above the
+// 4095 a 12 bit range would allow. The EEG object divides the codes by
+// 1 << PA_RESOLUTION_*, so this has to match that code width. With a narrower one
+// every sample is scaled past the top of the port range, and the oscilloscope
+// (which clamps to the port range and does not clamp its drawing) shows a flat
+// line against the edge of its band instead of a signal.
+#define PA_RESOLUTION_SIGNAL       16
 #define PA_RESOLUTION_IMPEDANCE    16
 #define PA_SAMPLINGRATE_SIGNAL     3000
 #define PA_SAMPLINGRATE_IMPEDANCE  1000     // ADC rate; per protocol channel 1000/6

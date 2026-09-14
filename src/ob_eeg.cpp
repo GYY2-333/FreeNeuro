@@ -1323,9 +1323,11 @@ openbci:	// common section for OpenBCI devices
 
 		case DEV_PHYSIOAMP:
 			// PhysioAmp GP-8 (USB HID), signal mode: single channel at 3000
-			// samples/sec. The 12 significant ADC bits arrive left aligned in a
-			// 16 bit word (raw10 << 4, range 0..16368). Both values come from the
-			// driver so they stay in step with the negotiated working mode.
+			// samples/sec. The samples are full width ADC codes - the reference
+			// host reads them as 16 bit and measured codes run into the tens of
+			// thousands - so the resolution has to match that code width. With a
+			// narrower one every sample lands above the port range and the
+			// oscilloscope clamps the trace flat against the top of its band.
 			st->resolution=PhysioAmpGetResolution();
 			numChannels=1;
 			update_samplingrate(PhysioAmpGetSamplingRate());
@@ -1443,8 +1445,10 @@ LRESULT CALLBACK EEGDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 								DisconnectNIA(); 
 								TTY.CONNECTED=FALSE;			
 							} else if (TTY.devicetype == DEV_PHYSIOAMP){
-								DisconnectPhysioAmp();
-								TTY.CONNECTED=FALSE;
+								// the reader thread could not be stopped, so the
+								// device is in fact still open - stay connected
+								if (DisconnectPhysioAmp()) TTY.CONNECTED=FALSE;
+								else report_error("Could not stop the PhysioAmp reader thread!");
 							} else {
 								BreakDownCommPort();
 							}

@@ -12,8 +12,16 @@
   (0x80 / 0x8F / 0xF8), it cannot be driven through the Raw Input API (as the NIA
   is).
 
-  A dedicated reader thread performs the blocking ReadFile() on the HID device.
-  Each 64 byte data frame carries 30 little-endian 16-bit samples plus a four byte
+  The device is opened for overlapped I/O and every transfer is waited for with a
+  timeout, so neither the handshake nor the shutdown can block the caller (the UI
+  thread) forever, and a pending read can always be cancelled cleanly. The reader
+  thread waits on its read completion event and on a stop event at the same time,
+  which is what lets DisconnectPhysioAmp() guarantee that the thread has really
+  finished before the device handle is closed. Closing that handle under a live
+  thread is what previously let a stale reader keep running and keep feeding the
+  object graph after a reconnect.
+
+  Each 64 byte data frame carries 30 little-endian ADC codes plus a four byte
   header (frame number, type id, tick counter). In signal mode the six protocol
   channels are just consecutive slices of one single ADC time series, so the 30
   samples are re-ordered into a single channel time series: for every sample we
@@ -50,15 +58,27 @@ extern "C" {
 
 // how many reports to skip while waiting for a handshake reply: a device left
 // streaming by a previous session may still have data frames in flight
-#define PA_HANDSHAKE_DISCARDS  8
+#define PA_HANDSHAKE_DISCARDS   8
+
+// total time budget for reading the handshake reply. It is shared between the
+// discards above, so a silent device costs the caller this much and no more
+#define PA_HANDSHAKE_TOTAL_MS   3000
+
+// how long to wait for the reader thread to finish when disconnecting
+#define PA_THREAD_EXIT_MS       5000
 
 // --- module state ------------------------------------------------------------
 static HANDLE  hPhysioAmp        = INVALID_HANDLE_VALUE;
 static HANDLE  hReaderThread     = NULL;
-static volatile BOOL readerDone  = FALSE;
+
+static HANDLE  hStopEvent        = NULL;   // manual reset: asks the reader to stop
+static HANDLE  hReadEvent        = NULL;   // completion event of the pending read
+static HANDLE  hWriteEvent       = NULL;   // completion event of a pending write
+static OVERLAPPED readOverlapped;
+static OVERLAPPED writeOverlapped;
 
 // report sizes as announced by the device, and how many leading bytes of a
-// transfer buffer precede the 64 byte payload (0 without Report IDs, 1 with)
+// transfer buffer precede the payload (0 without Report IDs, 1 with)
 static USHORT  inputReportLength  = PA_REPORT_LEN;
 static USHORT  outputReportLength = PA_REPORT_LEN;
 static int     reportIdBytes      = 0;
@@ -87,17 +107,76 @@ static const unsigned char paHandshakeRequest[PA_REPORT_LEN] = {
 
 
 /*----------------------------------------------------------------------------
-  close_device:  stop the reader thread and close the device handle.
+  report_payload_len:  how many payload bytes fit into a report of the given
+  size. This is below PA_REPORT_LEN only for a device whose report is shorter
+  than the 64 bytes this protocol uses.
 ----------------------------------------------------------------------------*/
-static void close_device(void)
+static unsigned int report_payload_len(USHORT reportLength)
 {
-	readerDone = TRUE;
+	if (reportLength <= (USHORT) reportIdBytes) return 0;
 
+	unsigned int len = (unsigned int)(reportLength - reportIdBytes);
+	return (len > PA_REPORT_LEN) ? PA_REPORT_LEN : len;
+}
+
+
+/*----------------------------------------------------------------------------
+  wait_for_io:  wait for an overlapped transfer to complete.
+
+  Returns 1 when it completed, 0 when the stop event was signalled (only waited
+  for when watchStop is set), -1 on timeout or device error. On timeout the
+  transfer is cancelled and reaped, so the OVERLAPPED is free for reuse and the
+  caller's buffer is no longer owned by the driver.
+----------------------------------------------------------------------------*/
+static int wait_for_io(OVERLAPPED *ol, HANDLE completion, DWORD timeoutMs, DWORD *transferred, BOOL watchStop)
+{
+	HANDLE waits[2];
+	DWORD  count = 1;
+
+	waits[0] = completion;
+	if (watchStop && hStopEvent != NULL)
+	{
+		waits[1] = hStopEvent;
+		count = 2;
+	}
+
+	DWORD w = WaitForMultipleObjects(count, waits, FALSE, timeoutMs);
+
+	if (w == WAIT_OBJECT_0)
+	{
+		if (!GetOverlappedResult(hPhysioAmp, ol, transferred, FALSE)) return -1;
+		return 1;
+	}
+	if (w == WAIT_OBJECT_0 + 1) return 0;          // stop requested
+
+	// timeout: cancel the transfer, then wait for the cancellation to complete
+	CancelIoEx(hPhysioAmp, ol);
+	GetOverlappedResult(hPhysioAmp, ol, transferred, TRUE);
+	return -1;
+}
+
+
+/*----------------------------------------------------------------------------
+  close_device:  stop the reader thread and close the device handle.
+
+  Returns FALSE when the reader thread is still alive after the timeout. In that
+  case both handles are deliberately kept: releasing them while the thread still
+  runs is exactly what would let a stale reader touch the object graph later.
+----------------------------------------------------------------------------*/
+static BOOL close_device(void)
+{
 	if (hReaderThread != NULL)
 	{
-		// CancelSynchronousIo unblocks a pending ReadFile on the reader thread
-		CancelSynchronousIo(hReaderThread);
-		WaitForSingleObject(hReaderThread, 2000);
+		if (hStopEvent != NULL) SetEvent(hStopEvent);
+		if (hPhysioAmp != INVALID_HANDLE_VALUE) CancelIoEx(hPhysioAmp, NULL);
+
+		if (WaitForSingleObject(hReaderThread, PA_THREAD_EXIT_MS) != WAIT_OBJECT_0)
+		{
+			write_logfile("PhysioAmp: reader thread still running after %d ms, keeping handles",
+			              PA_THREAD_EXIT_MS);
+			return FALSE;
+		}
+
 		CloseHandle(hReaderThread);
 		hReaderThread = NULL;
 	}
@@ -110,6 +189,7 @@ static void close_device(void)
 
 	actualMode = -1;
 	oldTick    = PA_FRAME_TICK_NONE;
+	return TRUE;
 }
 
 
@@ -154,10 +234,12 @@ static BOOL find_and_open_physioamp(void)
 
 		if (SetupDiGetDeviceInterfaceDetail(devInfo, &ifData, detail, needed, NULL, NULL))
 		{
+			// overlapped so that transfers can be waited for with a timeout and
+			// cancelled - neither is possible on a synchronous handle
 			HANDLE h = CreateFile(detail->DevicePath,
 			                      GENERIC_READ | GENERIC_WRITE,
 			                      FILE_SHARE_READ | FILE_SHARE_WRITE,
-			                      NULL, OPEN_EXISTING, 0, NULL);
+			                      NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
 			if (h != INVALID_HANDLE_VALUE)
 			{
 				HIDD_ATTRIBUTES attr;
@@ -178,7 +260,7 @@ static BOOL find_and_open_physioamp(void)
 							if (caps.OutputReportByteLength > 0)
 								outputReportLength = caps.OutputReportByteLength;
 
-							// the report descriptor decides whether the 64 byte payload is
+							// the report descriptor decides whether the payload is
 							// preceded by a report id byte
 							reportIdBytes = (inputReportLength > PA_REPORT_LEN) ? 1 : 0;
 							write_logfile("PhysioAmp: report length in=%d out=%d, leading id bytes=%d",
@@ -203,27 +285,41 @@ static BOOL find_and_open_physioamp(void)
 
 
 /*----------------------------------------------------------------------------
-  send_report:  send one 64 byte payload as an Output Report.
+  send_report:  send one payload as an Output Report.
 
-  The transfer buffer is outputReportLength bytes and the payload is placed
-  behind the leading report id byte, if the device uses report ids at all.
+  The transfer buffer is exactly outputReportLength bytes, as the class driver
+  expects, and the payload is copied behind the leading report id byte - limited
+  to what actually fits, so a device whose output report is shorter than its input
+  report cannot make this write past the end of the buffer.
 ----------------------------------------------------------------------------*/
 static BOOL send_report(const unsigned char *payload)
 {
 	if (hPhysioAmp == INVALID_HANDLE_VALUE) return FALSE;
 
+	unsigned int payloadLen = report_payload_len(outputReportLength);
+	if (payloadLen == 0) return FALSE;
+
 	unsigned char *buf = (unsigned char*) calloc(outputReportLength, 1);
 	if (buf == NULL) return FALSE;
 
-	memcpy(buf + reportIdBytes, payload, PA_REPORT_LEN);
+	memcpy(buf + reportIdBytes, payload, payloadLen);
+
+	ZeroMemory(&writeOverlapped, sizeof(writeOverlapped));
+	writeOverlapped.hEvent = hWriteEvent;
+	ResetEvent(hWriteEvent);
 
 	DWORD written = 0;
-	BOOL ok = WriteFile(hPhysioAmp, buf, outputReportLength, &written, NULL);
-	if (!ok || written != outputReportLength)
-	{
-		// fall back to the HID class helper (some stacks prefer this)
-		ok = HidD_SetOutputReport(hPhysioAmp, buf, outputReportLength);
-	}
+	BOOL  ok = FALSE;
+
+	if (WriteFile(hPhysioAmp, buf, outputReportLength, &written, &writeOverlapped))
+		ok = (written == outputReportLength);
+	else if (GetLastError() == ERROR_IO_PENDING)
+		ok = (wait_for_io(&writeOverlapped, hWriteEvent, PA_HANDSHAKE_TOTAL_MS, &written, FALSE) == 1)
+		     && (written == outputReportLength);
+
+	if (!ok)
+		write_logfile("PhysioAmp: could not write output report");
+
 	free(buf);
 	return ok;
 }
@@ -246,30 +342,51 @@ static BOOL send_command(unsigned char cmd)
 
   Reports without the signature are discarded, because a device left streaming by
   a previous session can still have a data frame in flight when the host asks for
-  a new handshake.
+  a new handshake. The whole search is bounded by PA_HANDSHAKE_TOTAL_MS, so a
+  silent device cannot block the caller for longer than that.
 
-  On success the 64 byte payload is copied to respPayload (when not NULL) and the
-  mode the device reports is returned through *mode: PA_MODE_SIGNAL,
-  PA_MODE_IMPEDANCE, or -1 when the mode stamp matches neither.
+  On success the payload is copied to respPayload (when not NULL) and the mode the
+  device reports is returned through *mode: PA_MODE_SIGNAL, PA_MODE_IMPEDANCE, or
+  -1 when the mode stamp matches neither.
 ----------------------------------------------------------------------------*/
 static BOOL read_response(unsigned char *respPayload, int *mode)
 {
 	if (hPhysioAmp == INVALID_HANDLE_VALUE) return FALSE;
 
+	unsigned int payloadLen = report_payload_len(inputReportLength);
+	if (payloadLen < 6) return FALSE;              // needs the signature and the stamp
+
 	unsigned char *buf = (unsigned char*) calloc(inputReportLength, 1);
 	if (buf == NULL) return FALSE;
 
-	BOOL valid = FALSE;
+	DWORD deadline = GetTickCount() + PA_HANDSHAKE_TOTAL_MS;
+	BOOL  valid = FALSE;
+
 	for (int attempt = 0; attempt < PA_HANDSHAKE_DISCARDS && !valid; attempt++)
 	{
-		DWORD read = 0;
-		if (!ReadFile(hPhysioAmp, buf, inputReportLength, &read, NULL))
+		DWORD now = GetTickCount();
+		if ((int)(deadline - now) <= 0)
 		{
-			write_logfile("PhysioAmp: ReadFile failed during handshake");
+			write_logfile("PhysioAmp: no valid handshake reply within %d ms", PA_HANDSHAKE_TOTAL_MS);
 			break;
 		}
-		if (read < (DWORD)(reportIdBytes + PA_REPORT_LEN))
-			continue;
+
+		ZeroMemory(&readOverlapped, sizeof(readOverlapped));
+		readOverlapped.hEvent = hReadEvent;
+		ResetEvent(hReadEvent);
+
+		DWORD read  = 0;
+		int   state = -1;
+
+		if (ReadFile(hPhysioAmp, buf, inputReportLength, &read, &readOverlapped))
+			state = 1;
+		else if (GetLastError() == ERROR_IO_PENDING)
+			state = wait_for_io(&readOverlapped, hReadEvent, deadline - now, &read, FALSE);
+		else
+			write_logfile("PhysioAmp: ReadFile failed during handshake");
+
+		if (state != 1) break;                     // timeout, stop or device error
+		if (read < (DWORD)(reportIdBytes + payloadLen)) continue;
 
 		// the payload starts behind the leading report id byte, if there is one
 		const unsigned char *payload = buf + reportIdBytes;
@@ -279,7 +396,7 @@ static BOOL read_response(unsigned char *respPayload, int *mode)
 			continue;
 
 		valid = TRUE;
-		if (respPayload != NULL) memcpy(respPayload, payload, PA_REPORT_LEN);
+		if (respPayload != NULL) memcpy(respPayload, payload, payloadLen);
 		if (mode != NULL)
 		{
 			if (payload[4] == PA_STAMP0_SIGNAL && payload[5] == PA_STAMP1_SIGNAL)
@@ -305,26 +422,18 @@ static BOOL read_response(unsigned char *respPayload, int *mode)
 ----------------------------------------------------------------------------*/
 static BOOL do_handshake(int *mode, unsigned char *echo)
 {
-	if (!send_report(paHandshakeRequest))
-	{
-		write_logfile("PhysioAmp: could not send handshake request");
-		return FALSE;
-	}
-	if (!read_response(echo, mode))
-	{
-		write_logfile("PhysioAmp: invalid handshake response");
-		return FALSE;
-	}
+	if (!send_report(paHandshakeRequest)) return FALSE;
+	if (!read_response(echo, mode))       return FALSE;
 	return TRUE;
 }
 
 
 /*----------------------------------------------------------------------------
-  parse_frame:  decode one 64 byte data frame (payload, without any report id).
+  parse_frame:  decode one data frame (payload, without any report id).
 
-  Signal mode: 30 little-endian 12 bit samples, filled in time order. The six
-  protocol channels are consecutive slices of that one ADC series, so the frame
-  becomes a consecutive block of the single channel time series.
+  Signal mode: 30 little-endian ADC codes, filled in time order. The six protocol
+  channels are consecutive slices of that one ADC series, so the frame becomes a
+  consecutive block of the single channel time series.
 ----------------------------------------------------------------------------*/
 static void parse_frame(const unsigned char *payload)
 {
@@ -378,7 +487,10 @@ static void parse_frame(const unsigned char *payload)
 
 
 /*----------------------------------------------------------------------------
-  PhysioAmpReadThread:  blocking reader loop.
+  PhysioAmpReadThread:  reader loop.
+
+  The read is waited for together with the stop event, so DisconnectPhysioAmp()
+  can always bring this loop to an end - even while a read is pending.
 ----------------------------------------------------------------------------*/
 static DWORD WINAPI PhysioAmpReadThread(LPVOID lpv)
 {
@@ -393,20 +505,30 @@ static DWORD WINAPI PhysioAmpReadThread(LPVOID lpv)
 
 	const DWORD frameLen = (DWORD)(reportIdBytes + PA_DATA_OFFSET + PA_SAMPLES_PER_FRAME * 2);
 
-	while (!readerDone)
+	for (;;)
 	{
-		DWORD read = 0;
-		if (ReadFile(hPhysioAmp, buf, inputReportLength, &read, NULL))
-		{
-			if (read >= frameLen)
-				parse_frame(buf + reportIdBytes);
-		}
+		ZeroMemory(&readOverlapped, sizeof(readOverlapped));
+		readOverlapped.hEvent = hReadEvent;
+		ResetEvent(hReadEvent);
+
+		DWORD read  = 0;
+		int   state;
+
+		if (ReadFile(hPhysioAmp, buf, inputReportLength, &read, &readOverlapped))
+			state = 1;
+		else if (GetLastError() == ERROR_IO_PENDING)
+			state = wait_for_io(&readOverlapped, hReadEvent, INFINITE, &read, TRUE);
 		else
+			state = -1;
+
+		if (state == 0) break;                          // stop requested
+		if (state < 0)
 		{
-			// device removed / error -> leave the loop
-			if (!readerDone) write_logfile("PhysioAmp: ReadFile failed, closing reader");
+			write_logfile("PhysioAmp: ReadFile failed, closing reader");
 			break;
 		}
+
+		if (read >= frameLen) parse_frame(buf + reportIdBytes);
 	}
 
 	free(buf);
@@ -435,6 +557,24 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 		return TRUE;
 	}
 
+	// a reader that never finished would keep touching the object graph, so make
+	// sure it is really gone before the device is opened again
+	if (hReaderThread != NULL && !close_device())
+	{
+		write_logfile("PhysioAmp: previous reader thread still running, not connecting");
+		return FALSE;
+	}
+
+	if (hStopEvent == NULL)  hStopEvent  = CreateEvent(NULL, TRUE,  FALSE, NULL);
+	if (hReadEvent == NULL)  hReadEvent  = CreateEvent(NULL, FALSE, FALSE, NULL);
+	if (hWriteEvent == NULL) hWriteEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+	if (hStopEvent == NULL || hReadEvent == NULL || hWriteEvent == NULL)
+	{
+		write_logfile("PhysioAmp: could not create the I/O events");
+		return FALSE;
+	}
+	ResetEvent(hStopEvent);
+
 	sav_pause = TTY.read_pause;
 	TTY.read_pause = 1;
 
@@ -447,8 +587,11 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 
 	// ask the device which mode it is in; 0xF8 toggles, so it must only be sent
 	// when the device is not already in the requested mode
+	memset(echo, 0, sizeof(echo));
+
 	if (!do_handshake(&mode, echo))
 	{
+		write_logfile("PhysioAmp: handshake failed");
 		close_device();
 		TTY.read_pause = sav_pause;
 		return FALSE;
@@ -477,6 +620,7 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 
 		if (!do_handshake(&mode, echo))
 		{
+			write_logfile("PhysioAmp: handshake after mode switch failed");
 			close_device();
 			TTY.read_pause = sav_pause;
 			return FALSE;
@@ -521,7 +665,6 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 	actualMode    = mode;
 	streamingMode = mode;
 	oldTick       = PA_FRAME_TICK_NONE;
-	readerDone    = FALSE;
 	hReaderThread = CreateThread(NULL, 0, PhysioAmpReadThread, NULL, 0, NULL);
 	if (hReaderThread == NULL)
 	{
@@ -540,11 +683,20 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 
 /*----------------------------------------------------------------------------
   DisconnectPhysioAmp:  stop the reader thread and close the device.
+
+  Returns FALSE when the reader could not be stopped; the caller then keeps the
+  "connected" state instead of pretending the device is free.
 ----------------------------------------------------------------------------*/
 BOOL DisconnectPhysioAmp(void)
 {
 	write_logfile("Disconnecting PhysioAmp");
-	close_device();
+
+	if (!close_device())
+	{
+		write_logfile("PhysioAmp: could not stop the reader thread");
+		return FALSE;
+	}
+
 	return TRUE;
 }
 
