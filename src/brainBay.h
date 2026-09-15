@@ -294,6 +294,7 @@ extern HACCEL        ghAccel;
 
 extern HWND          ghWndMain;
 extern HWND          ghWndStatusbox;
+extern HWND          ghWndPlayerbar;      // top toolbar holding the session buttons
 extern HWND          ghWndSettings;
 extern HWND          ghWndDesign;
 extern HWND          ghWndToolbox;
@@ -358,6 +359,8 @@ typedef struct GLOBALStruct
 	int statusWindowHeightWithPlayer;
 	int statusWindowMargin;
 	int statusWindowMarginWithPlayer;
+	int playerBarHeight;             // height in pixels of the top toolbar
+	int playerBarMargin;
 
 	int fly;
 	int run_exception;
@@ -682,6 +685,15 @@ LONG    get_sliderpos(LONG samplepos);
 void	set_session_pos(long pos);
 void	get_session_length(void);
 void	update_status_window(void);
+void	update_playerbar_window(void);
+void	update_canvas_window(void);
+HWND	status_item(int idc);
+int		canvas_top(void);
+int		canvas_bottom(void);
+void	clamp_canvas_rect(RECT * r);
+void	install_canvas_clamp(HWND hWnd);
+void	sweep_canvas_windows(void);
+void	keep_popup_below_toolbar(int * x, int * y, int w, int h);
 
 
 //  Com-Port functions

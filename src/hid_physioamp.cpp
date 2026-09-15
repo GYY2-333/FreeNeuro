@@ -397,6 +397,11 @@ static BOOL read_response(unsigned char *respPayload, int *mode)
 
 		valid = TRUE;
 		if (respPayload != NULL) memcpy(respPayload, payload, payloadLen);
+		// logged because the mode stamp is the one part of the reply the clone
+		// firmware's documentation does not seem to describe correctly for every
+		// device - having the bytes on record is what makes that visible
+		write_logfile("PhysioAmp: handshake reply %02X %02X %02X %02X %02X %02X",
+		              payload[0], payload[1], payload[2], payload[3], payload[4], payload[5]);
 		if (mode != NULL)
 		{
 			if (payload[4] == PA_STAMP0_SIGNAL && payload[5] == PA_STAMP1_SIGNAL)
@@ -453,8 +458,11 @@ static void parse_frame(const unsigned char *payload)
 	{
 		if (!typeIdWarned)
 		{
+			// once only: the sample bytes below are read regardless of the header,
+			// so this is here to make the device's actual header layout visible
 			typeIdWarned = TRUE;
-			write_logfile("PhysioAmp: unexpected frame type 0x%02X in frame %d", typeId, frameNumber);
+			write_logfile("PhysioAmp: frame header %02X %02X %02X %02X (frame %d, type 0x%02X)",
+			              payload[0], payload[1], payload[2], payload[3], frameNumber, typeId);
 		}
 	}
 
@@ -597,42 +605,30 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 		return FALSE;
 	}
 
-	if (mode < 0)
+	/* Signal mode is the only mode this driver streams, and the device powers up
+	   in it - 0xF8 is the one thing that toggles it and nothing here sends it
+	   unless the reply says the device is in impedance mode already.
+
+	   The mode stamp (reply bytes 4..5) is the only way to read the mode back, but
+	   it is not part of the documented frame format and a real device has been seen
+	   answering with bytes that match neither stamp. An unrecognised stamp is
+	   therefore logged and taken as "usable" instead of failing the connect - that
+	   failure is what made a perfectly present device report "not found". */
+	if (mode == PA_MODE_IMPEDANCE)
 	{
-		// the reply carried no mode stamp we know, so toggling would be a guess
-		write_logfile("PhysioAmp: handshake reply has no known mode stamp, refusing to switch");
-		close_device();
-		TTY.read_pause = sav_pause;
-		return FALSE;
+		write_logfile("PhysioAmp: device reports impedance mode, asking it to toggle");
+
+		if (!send_command(PA_CMD_SWITCHMODE) || !do_handshake(&mode, echo))
+		{
+			write_logfile("PhysioAmp: mode switch failed");
+			close_device();
+			TTY.read_pause = sav_pause;
+			return FALSE;
+		}
 	}
-
-	if (mode != requestedMode)
+	else if (mode < 0)
 	{
-		write_logfile("PhysioAmp: device is in mode %d, switching to %d", mode, requestedMode);
-
-		if (!send_command(PA_CMD_SWITCHMODE))
-		{
-			write_logfile("PhysioAmp: could not send mode switch command");
-			close_device();
-			TTY.read_pause = sav_pause;
-			return FALSE;
-		}
-
-		if (!do_handshake(&mode, echo))
-		{
-			write_logfile("PhysioAmp: handshake after mode switch failed");
-			close_device();
-			TTY.read_pause = sav_pause;
-			return FALSE;
-		}
-
-		if (mode != requestedMode)
-		{
-			write_logfile("PhysioAmp: mode switch failed, device reports mode %d", mode);
-			close_device();
-			TTY.read_pause = sav_pause;
-			return FALSE;
-		}
+		write_logfile("PhysioAmp: unrecognised mode stamp, continuing anyway");
 	}
 
 	if (mode == PA_MODE_IMPEDANCE)

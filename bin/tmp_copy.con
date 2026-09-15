@@ -1,0 +1,27 @@
+next object=62
+xpos=36
+ypos=31
+inputports=0
+outputports=0
+tag=SESSIONMANAGER
+selectcolor=4227327.000000
+bkcol=6968887.000000
+fontcol=16777215.000000
+fontbkcol=8417103.000000
+top=36
+left=2
+right=830
+bottom=459
+fontsize=15
+wndcaption=Welcome to BrainBay - Select demo session !
+logopath=
+sessionlist=ECG feedback from EDF file#ecg/ecg1~§EMG threshold training#emg/emg_training1~§Alpha feedback#eeg/alpha/alpha_midi~§Alpha/Theta training#eeg/alpha_theta/alpha-theta_42~§Increase SMR decrease Theta#eeg/smr/inc-smr_sup-theta_2~§
+displaynavigation=1
+bitmapsize=100
+menu_x=40
+menu_y=40
+navcross_x=550
+navcross_y=40
+logo_x=650
+logo_y=50
+end object

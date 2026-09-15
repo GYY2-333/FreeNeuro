@@ -622,9 +622,9 @@ BOOL load_configfile(LPCTSTR pszFileName)
 			}
 
 		if (GLOBAL.locksession) 
-				ShowWindow(GetDlgItem(ghWndStatusbox,IDC_DESIGN), SW_HIDE);
+				ShowWindow(status_item(IDC_DESIGN), SW_HIDE);
 		else 
-				ShowWindow(GetDlgItem(ghWndStatusbox,IDC_DESIGN), SW_SHOW);
+				ShowWindow(status_item(IDC_DESIGN), SW_SHOW);
 
 
 		 init_system_time();
@@ -639,7 +639,7 @@ BOOL load_configfile(LPCTSTR pszFileName)
 		 SetDlgItemInt(ghWndStatusbox,IDC_SAMPLINGRATE,act_samplingrate,0);
 		 SetDlgItemText(ghWndStatusbox,IDC_STATUS,"Configuration loaded");
 		 SetDlgItemText(ghWndStatusbox,IDC_TIME,"0.0");
-		 SetDlgItemText(ghWndStatusbox,IDC_JUMPPOS,"0.0");
+		 SetWindowText(status_item(IDC_JUMPPOS),"0.0");
 		 sprintf(szdata, "%.1f", (float)GLOBAL.session_length/(float)PACKETSPERSECOND);
 		 SetDlgItemText(ghWndStatusbox,IDC_SESSLEN,szdata);
  		 SendMessage(GetDlgItem(ghWndStatusbox,IDC_SESSIONPOS),TBM_SETPOS,TRUE,(LONG)0);
@@ -654,13 +654,13 @@ BOOL load_configfile(LPCTSTR pszFileName)
 		 if ((!GLOBAL.showdesign) || (GLOBAL.locksession))
 		 {  
 			 ShowWindow(ghWndDesign, FALSE); 
-			 SetDlgItemText(ghWndStatusbox,IDC_DESIGN,"Show Design"); 
+			 SetWindowText(status_item(IDC_DESIGN),"Show Design"); 
 		 }
 		 else 
 		 {
 			 ShowWindow(ghWndDesign,TRUE);
 		     SetWindowPos(ghWndDesign,0,0,0,0,0,SWP_DRAWFRAME|SWP_NOMOVE|SWP_NOSIZE);
-			 SetDlgItemText(ghWndStatusbox,IDC_DESIGN,"Hide Design"); 
+			 SetWindowText(status_item(IDC_DESIGN),"Hide Design"); 
 		 }
 
 

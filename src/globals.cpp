@@ -110,6 +110,7 @@ HWND       ghWndMain;		 //  handle of main window
 HWND	   ghWndToolbox;     //  handle of toolbox window (actual object settings)
 HWND	   ghWndAnimation;   //  handle of Animation Window
 HWND	   ghWndStatusbox;      //  handle of Status Window
+HWND	   ghWndPlayerbar;      //  handle of top toolbar (session buttons)
 HWND	   ghWndSettings;      //  handle of Settings Window
 HWND	   ghWndDesign;      //  handle of Design Window
 HGLRC      GLRC_Animation;	 // Handle to GL-context of Animation Window
@@ -352,6 +353,8 @@ void create_object(int type)
 				SetWindowPos(actobject->displayWnd,HWND_TOP,0,0,0,0,SWP_DRAWFRAME|SWP_NOMOVE|SWP_NOSIZE);
 		}
 		if (actobject->displayWnd)   SetForegroundWindow(actobject->displayWnd);
+		// keep newly created object windows inside the canvas area
+		if (actobject->displayWnd)   install_canvas_clamp(actobject->displayWnd);
 
 	}
 }
@@ -868,6 +871,8 @@ void GlobalInitialize()
 	GLOBAL.statusWindowHeightWithPlayer=76;
 	GLOBAL.statusWindowMargin=48;
 	GLOBAL.statusWindowMarginWithPlayer=83;
+	GLOBAL.playerBarHeight=36;      // top toolbar with play/stop/reset/... buttons
+	GLOBAL.playerBarMargin=0;       // distance between menu bar and toolbar
 
 	GLOBAL.run_exception=0;
 	GLOBAL.fly=0;
@@ -891,6 +896,7 @@ void GlobalInitialize()
     ghWndToolbox=NULL;
     ghWndSettings=NULL;
     ghWndDesign=NULL;
+    ghWndPlayerbar=NULL;
 	copy_object=NULL;
 
 	init_draw();

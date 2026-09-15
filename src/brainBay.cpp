@@ -54,6 +54,11 @@
 #include "darkmode.h"
 #include "ob_neurobit.h"
 
+// timer that periodically re-checks that object windows stay inside the
+// canvas area (below the top toolbar, above the status box)
+#define IDT_CANVAS_SWEEP        4711
+#define CANVAS_SWEEP_INTERVAL   500
+
 LRESULT CALLBACK AboutDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam );
 LRESULT CALLBACK SCALEDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam );
 LRESULT CALLBACK COLORDlgHandler(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
@@ -167,6 +172,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	ShowWindow( ghWndDesign, TRUE ); 
 	UpdateWindow( ghWndDesign ); 
 	ghWndStatusbox=CreateDialog(hInst, (LPCTSTR)IDD_STATUSBOX, ghWndMain, (DLGPROC)StatusDlgHandler); 
+	ghWndPlayerbar=CreateDialog(hInst, (LPCTSTR)IDD_PLAYERBAR, ghWndMain, (DLGPROC)StatusDlgHandler); 
 	update_status_window();
 	SetFocus(ghWndMain);
 
@@ -218,6 +224,13 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 	{
 
 	 case WM_CREATE:
+		// object windows can be created at any time - check periodically
+		// that they are kept inside the canvas area (below the toolbar)
+		SetTimer(hWnd, IDT_CANVAS_SWEEP, CANVAS_SWEEP_INTERVAL, NULL);
+		break;
+
+	 case WM_TIMER:
+		if (wParam==IDT_CANVAS_SWEEP) sweep_canvas_windows();
 		break;
 
 	 case WM_ENABLE:
@@ -254,19 +267,9 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 					GLOBAL.showdesign=TRUE;
 					ShowWindow(ghWndDesign,TRUE);
 					// Fill the Design canvas to the (maximized) main window's client
-					// area instead of a fixed 800x400 box, so it stays full-screen.
-					{
-						RECT rcClient;
-						GetClientRect(ghWndMain, &rcClient);
-						int statusH = (GLOBAL.session_length == 0)
-							? GLOBAL.statusWindowMargin
-							: GLOBAL.statusWindowMarginWithPlayer;
-						int designH = rcClient.bottom - statusH;
-						if (designH < 50) designH = 50;
-						SetWindowPos(ghWndDesign, HWND_BOTTOM, 0, 0,
-							rcClient.right, designH, SWP_DRAWFRAME);
-					}
-					SetDlgItemText(ghWndStatusbox,IDC_DESIGN,"Hide Design"); 
+					// area, between the top toolbar and the bottom status box.
+					update_canvas_window();
+					SetWindowText(status_item(IDC_DESIGN),"Hide Design"); 
 					GLOBAL.hidestatus=FALSE;
 					ShowWindow(ghWndStatusbox,TRUE);
 				    SetWindowText(ghWndMain,"BrainBay");
@@ -277,7 +280,7 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 					SetDlgItemInt(ghWndStatusbox,IDC_SAMPLINGRATE,PACKETSPERSECOND,0);
 					SetDlgItemText(ghWndStatusbox,IDC_STATUS,"Configuration loaded");
 					SetDlgItemText(ghWndStatusbox,IDC_TIME,"0.0");
-					SetDlgItemText(ghWndStatusbox,IDC_JUMPPOS,"0.0");
+					SetWindowText(status_item(IDC_JUMPPOS),"0.0");
 					SetDlgItemText(ghWndStatusbox,IDC_SESSLEN,"0.0");
  					SendMessage(GetDlgItem(ghWndStatusbox,IDC_SESSIONPOS),TBM_SETPOS,TRUE,(LONG)0);
 					SendMessage(GetDlgItem(ghWndStatusbox,IDC_SESSIONPOS),TBM_SETSELEND,TRUE,(LONG)0);
@@ -791,34 +794,10 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 				update_status_window();
 				// printf("Size: %d,%d,%d,%d \n",rc.left,rc.top,rc.right,rc.bottom);
 			 }
-			 // Resize Design window to fill client area (leave room for StatusBox)
-			 if (wParam != SIZE_MINIMIZED && ghWndDesign)
-			 {
-				 RECT rcClient;
-				 GetClientRect(ghWndMain, &rcClient);
-				 int statusH = GLOBAL.session_length == 0
-					 ? GLOBAL.statusWindowMargin
-					 : GLOBAL.statusWindowMarginWithPlayer;
-				 int designH = rcClient.bottom - statusH;
-				 if (designH < 50) designH = 50;
-				 int fullW = rcClient.right;
-				 SetWindowPos(ghWndDesign, NULL, 0, 0,
-					 fullW, designH,
-					 SWP_NOZORDER | SWP_NOACTIVATE);
-				 // Also resize SessionManager if present
-				 for (int i = 0; i < GLOBAL.objects; i++)
-				 {
-					 if (objects[i] && objects[i]->displayWnd &&
-						 objects[i]->type == OB_SESSIONMANAGER &&
-						 GetParent(objects[i]->displayWnd) == ghWndMain)
-					 {
-						 SESSIONMANAGEROBJ* sm = (SESSIONMANAGEROBJ*)objects[i];
-						 sm->left = 0; sm->top = 0;
-						 sm->right = fullW; sm->bottom = designH;
-						 MoveWindow(objects[i]->displayWnd, 0, 0, fullW, designH, TRUE);
-					 }
-				 }
-			 }
+			 // Resize Design window to fill client area (leave room for the
+			 // top toolbar and the bottom status box)
+			 if (wParam != SIZE_MINIMIZED)
+				 update_canvas_window();
 			break;
     	case WM_MOVE:
 			{
@@ -838,39 +817,10 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 		case WM_APP + 1:
 		// Deferred startup resize: fill Design window and all child display windows
 		{
-			RECT rcClient;
-			GetClientRect(ghWndMain, &rcClient);
-			int statusH = (GLOBAL.session_length == 0)
-				? GLOBAL.statusWindowMargin
-				: GLOBAL.statusWindowMarginWithPlayer;
-			int designH = rcClient.bottom - statusH;
-			if (designH < 50) designH = 50;
-			int fullW = rcClient.right;
-
-			// Resize Design canvas
-			SetWindowPos(ghWndDesign, NULL, 0, 0,
-				fullW, designH,
-				SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+			// Resize Design canvas (and a full screen Sessionmanager) between
+			// the top toolbar and the bottom status box
+			update_canvas_window();
 			InvalidateRect(ghWndDesign, NULL, TRUE);
-
-			// Resize any object display window (e.g. SessionManager) that is
-			// a direct child of ghWndMain and fills the main area
-			for (int i = 0; i < GLOBAL.objects; i++)
-			{
-				if (objects[i] && objects[i]->displayWnd &&
-					GetParent(objects[i]->displayWnd) == ghWndMain)
-				{
-					if (objects[i]->type == OB_SESSIONMANAGER)
-					{
-						SESSIONMANAGEROBJ* sm = (SESSIONMANAGEROBJ*)objects[i];
-						sm->left   = 0;
-						sm->top    = 0;
-						sm->right  = fullW;
-						sm->bottom = designH;
-						MoveWindow(objects[i]->displayWnd, 0, 0, fullW, designH, TRUE);
-					}
-				}
-			}
 		}
 		break;
 		case WM_DESTROY:

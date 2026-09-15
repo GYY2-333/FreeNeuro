@@ -14,6 +14,33 @@
  --------------------------------------------------------------------------------------*/
 #include "brainBay.h"
 #include "darkmode.h"
+#include "ob_sessionmanager.h"
+
+
+//-----------------------------------------------------------------------
+//  status_item
+//  The session buttons (Play, Stop, Reset, End, Design, Goto, In, Out,
+//  Fly, Loop) are located in the top toolbar, while the timeline
+//  (slider, time, status) is located in the bottom status box.
+//  Both windows share one dialog-handler, so control lookups always
+//  have to search both windows.
+//-----------------------------------------------------------------------
+HWND status_item(int idc)
+{
+	HWND hwnd=NULL;
+
+	if (ghWndStatusbox!=NULL) 
+	{
+		hwnd=GetDlgItem(ghWndStatusbox,idc);
+		if (hwnd!=NULL) return(hwnd);
+	}
+	if (ghWndPlayerbar!=NULL) 
+	{
+		hwnd=GetDlgItem(ghWndPlayerbar,idc);
+		if (hwnd!=NULL) return(hwnd);
+	}
+	return(NULL);
+}
 
 
 COLORREF select_color(HWND hwnd, COLORREF initial)
@@ -47,6 +74,39 @@ void update_toolbox_position(HWND hDlg)
 	}
 }
 
+//-----------------------------------------------------------------------
+//  keep_popup_below_toolbar
+//  Moves a floating dialog (object settings / toolbox window, given in
+//  screen coordinates) below the top toolbar so that the toolbar can
+//  never cover it.
+//-----------------------------------------------------------------------
+void keep_popup_below_toolbar(int * x, int * y, int w, int h)
+{
+	RECT tb,wa;
+	int dy;
+
+	if ((x==NULL)||(y==NULL)) return;
+	if ((ghWndPlayerbar==NULL)||(!IsWindowVisible(ghWndPlayerbar))) return;
+
+	GetWindowRect(ghWndPlayerbar, &tb);
+
+	if ((*x < tb.right)&&(*x+w > tb.left)&&      // overlaps the toolbar band
+	    (*y < tb.bottom)&&(*y+h > tb.top))
+	{
+		dy = tb.bottom - *y + 4;
+		*y += dy;
+	}
+
+	if (SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0))
+	{
+		if (*y+h > wa.bottom) *y = wa.bottom-h;
+		if (*y < wa.top) *y = wa.top;
+		if (*x+w > wa.right) *x = wa.right-w;
+		if (*x < wa.left) *x = wa.left;
+	}
+}
+
+
 void display_toolbox(HWND hDlg)
 {
 	int x,y,w,h;
@@ -63,6 +123,9 @@ void display_toolbox(HWND hDlg)
 		y = GLOBAL.tool_top;
 		w=wndpl.rcNormalPosition.right-wndpl.rcNormalPosition.left;
 		h=wndpl.rcNormalPosition.bottom-wndpl.rcNormalPosition.top;
+
+		// never let the toolbar cover an object settings dialog
+		keep_popup_below_toolbar(&x,&y,w,h);
 
 		SetWindowPos(ghWndToolbox, ghWndMain, x,y,w,h,SWP_NOACTIVATE|SWP_SHOWWINDOW);
 		UpdateWindow(ghWndToolbox);
@@ -766,12 +829,12 @@ LRESULT CALLBACK SETTINGSDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPA
 					{  
 							GLOBAL.showdesign=FALSE;
 							ShowWindow(ghWndDesign,FALSE);
-							SetDlgItemText(ghWndStatusbox,IDC_DESIGN,"Show Design");
-						    ShowWindow(GetDlgItem(ghWndStatusbox,IDC_DESIGN), SW_HIDE);
+							SetWindowText(status_item(IDC_DESIGN),"Show Design");
+						    ShowWindow(status_item(IDC_DESIGN), SW_HIDE);
 					}
 					else 
 					{
-							ShowWindow(GetDlgItem(ghWndStatusbox,IDC_DESIGN), SW_SHOW);
+							ShowWindow(status_item(IDC_DESIGN), SW_SHOW);
 					}
 				 break;
 			case IDC_USE_CVCAPTURE:
@@ -1246,23 +1309,33 @@ LRESULT CALLBACK StatusDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARA
 	{
 		case WM_INITDIALOG:
 				InstallDarkSubclass(hDlg);
-				GetWindowPlacement(ghWndMain, &wndpl);
-				SetWindowPos(hDlg, HWND_BOTTOM, wndpl.rcNormalPosition.left+4, wndpl.rcNormalPosition.bottom-40, 
-				wndpl.rcNormalPosition.right-wndpl.rcNormalPosition.left-8,35, SWP_NOACTIVATE|SWP_NOZORDER);
+
+				if (GetDlgItem(hDlg,IDC_SESSIONPOS)!=NULL)    // bottom status box
+				{
+					GetWindowPlacement(ghWndMain, &wndpl);
+					SetWindowPos(hDlg, HWND_BOTTOM, wndpl.rcNormalPosition.left+4, wndpl.rcNormalPosition.bottom-40, 
+					wndpl.rcNormalPosition.right-wndpl.rcNormalPosition.left-8,35, SWP_NOACTIVATE|SWP_NOZORDER);
 				
-				hTrack_Bar=GetDlgItem(hDlg,IDC_SESSIONPOS);
-				SendMessage(hTrack_Bar,TBM_SETRANGE,TRUE,MAKELONG(0, 1000));
-				SendMessage(hTrack_Bar,TBM_SETPOS,TRUE,(LONG)0);
+					hTrack_Bar=GetDlgItem(hDlg,IDC_SESSIONPOS);
+					SendMessage(hTrack_Bar,TBM_SETRANGE,TRUE,MAKELONG(0, 1000));
+					SendMessage(hTrack_Bar,TBM_SETPOS,TRUE,(LONG)0);
 
-				SetDlgItemText(hDlg,IDC_TIME," 00:00:00.000");
-				SetDlgItemText(hDlg, IDC_JUMPPOS, "00:00:00");
-				SetDlgItemText(hDlg, IDC_SESSLEN, "00:00:00");
-				SetDlgItemText(hDlg, IDC_SESSTART, "00:00:00");
-				SetDlgItemText (hDlg, IDC_STATUS, "BrainBay ready.");
+					SetDlgItemText(hDlg,IDC_TIME," 00:00:00.000");
+					SetDlgItemText(hDlg, IDC_SESSLEN, "00:00:00");
+					SetDlgItemText(hDlg, IDC_SESSTART, "00:00:00");
+					SetDlgItemText (hDlg, IDC_STATUS, "BrainBay ready.");
 
-				SendMessage(hTrack_Bar,TBM_SETSELSTART,TRUE,0);
-				SendMessage(hTrack_Bar,TBM_SETSELEND,TRUE,1000);
-				CheckDlgButton(hDlg,IDC_SESSIONLOOP,GLOBAL.session_loop);
+					SendMessage(hTrack_Bar,TBM_SETSELSTART,TRUE,0);
+					SendMessage(hTrack_Bar,TBM_SETSELEND,TRUE,1000);
+				}
+
+				if (GetDlgItem(hDlg,IDC_SESSIONLOOP)!=NULL)   // top toolbar
+				{
+					SetDlgItemText(hDlg, IDC_JUMPPOS, "00:00:00");
+					SendMessage(GetDlgItem(hDlg,IDC_SESSIONLOOP), BM_SETCHECK,
+						(WPARAM)(GLOBAL.session_loop ? BST_CHECKED : BST_UNCHECKED), 0);
+					update_playerbar_window();
+				}
 
 				return TRUE;
 
@@ -1282,11 +1355,11 @@ LRESULT CALLBACK StatusDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARA
 						stop_session();
 						TIMING.ppscounter=0;
 						TIMING.packetcounter=0;
-						SetDlgItemText(hDlg,IDC_TIME,"0.0");
+						SetDlgItemText(ghWndStatusbox,IDC_TIME,"0.0");
 						GLOBAL.session_sliding=-1;
-						SendMessage(GetDlgItem(hDlg,IDC_SESSIONPOS),TBM_SETSELSTART,TRUE,0);
-						SendMessage(GetDlgItem(hDlg,IDC_SESSIONPOS),TBM_SETSELEND,TRUE,1000);
-						SendMessage(GetDlgItem(hDlg,IDC_SESSIONPOS),TBM_SETPOS,TRUE,(LONG)(0));
+						SendMessage(status_item(IDC_SESSIONPOS),TBM_SETSELSTART,TRUE,0);
+						SendMessage(status_item(IDC_SESSIONPOS),TBM_SETSELEND,TRUE,1000);
+						SendMessage(status_item(IDC_SESSIONPOS),TBM_SETPOS,TRUE,(LONG)(0));
 						GLOBAL.session_start=0;
 						GLOBAL.session_end=GLOBAL.session_length;
 						update_statusinfo();
@@ -1339,14 +1412,14 @@ LRESULT CALLBACK StatusDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARA
 					break;
 				case IDC_JUMP:
 						stop_session();
-						GetDlgItemText(hDlg, IDC_JUMPPOS, str, 20);
+						GetWindowText(status_item(IDC_JUMPPOS), str, 20);
 						fl = get_time(str) * (float) PACKETSPERSECOND;
 						if (GLOBAL.session_length>0) set_session_pos((long)fl);
-						SendMessage(GetDlgItem(ghWndStatusbox,IDC_SESSIONPOS),TBM_SETPOS,TRUE,get_sliderpos(TIMING.packetcounter));
+						SendMessage(status_item(IDC_SESSIONPOS),TBM_SETPOS,TRUE,get_sliderpos(TIMING.packetcounter));
 					    SetFocus(ghWndMain);
 						break;
 				case IDC_SESSIONLOOP:
-						GLOBAL.session_loop=IsDlgButtonChecked(hDlg, IDC_SESSIONLOOP);
+						GLOBAL.session_loop=(SendMessage(status_item(IDC_SESSIONLOOP),BM_GETCHECK,0,0)==BST_CHECKED);
 					    SetFocus(ghWndMain);
 						break;
 				case IDC_GOSTART:
@@ -1354,7 +1427,7 @@ LRESULT CALLBACK StatusDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARA
 						char tmp[20];
 						print_time(tmp,(float)TIMING.packetcounter/(float)PACKETSPERSECOND,0);
 						//SetDlgItemText(ghWndStatusbox,IDC_TIME,tmp);
-						SetDlgItemText(hDlg, IDC_JUMPPOS,tmp);
+						SetWindowText(status_item(IDC_JUMPPOS), tmp);
 				
 						//if (GLOBAL.session_length>0) set_session_pos(GLOBAL.session_start);
 						//SendMessage(GetDlgItem(ghWndStatusbox,IDC_SESSIONPOS),TBM_SETPOS,TRUE,get_sliderpos(TIMING.packetcounter));
@@ -1363,7 +1436,7 @@ LRESULT CALLBACK StatusDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARA
 				case IDC_SETSTART:
 					{
  						int pos=get_sliderpos(TIMING.packetcounter);
-						SendMessage(GetDlgItem(hDlg,IDC_SESSIONPOS),TBM_SETSELSTART,TRUE,pos);
+						SendMessage(status_item(IDC_SESSIONPOS),TBM_SETSELSTART,TRUE,pos);
 						GLOBAL.session_start=TIMING.packetcounter;
 						update_statusinfo();
 					}
@@ -1371,7 +1444,7 @@ LRESULT CALLBACK StatusDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARA
 				case IDC_SETEND:
 					{
  						int pos = get_sliderpos(TIMING.packetcounter);
-						SendMessage(GetDlgItem(hDlg,IDC_SESSIONPOS),TBM_SETSELEND,TRUE,pos);
+						SendMessage(status_item(IDC_SESSIONPOS),TBM_SETSELEND,TRUE,pos);
 						GLOBAL.session_end=TIMING.packetcounter;
 						update_statusinfo();
 					}
@@ -1390,14 +1463,14 @@ LRESULT CALLBACK StatusDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LPARA
 						{  
 							GLOBAL.showdesign=FALSE;
 							ShowWindow(ghWndDesign,FALSE);
-							SetDlgItemText(ghWndStatusbox,IDC_DESIGN,"Show Design");
+							SetWindowText(status_item(IDC_DESIGN),"Show Design");
 						}
 						else 
 						{
 							GLOBAL.showdesign=TRUE;
 							ShowWindow(ghWndDesign,TRUE);
 						    SetWindowPos(ghWndDesign,HWND_TOP,0,0,0,0,SWP_DRAWFRAME|SWP_NOMOVE|SWP_NOSIZE);
-							SetDlgItemText(ghWndStatusbox,IDC_DESIGN,"Hide Design"); 
+							SetWindowText(status_item(IDC_DESIGN),"Hide Design"); 
 						}
 					    SetFocus(ghWndMain);
 					break;
@@ -2003,6 +2076,262 @@ void update_status_window(void)
 		               LOWORD(GLOBAL.main_maximized)-8,HIWORD(GLOBAL.main_maximized), 0);
 	}
 	*/
+
+	update_playerbar_window();
+	// the usable canvas area may have changed (status box height / visibility)
+	sweep_canvas_windows();
+}
+
+
+void update_playerbar_window(void)
+{
+	RECT rc;
+	POINT pt;
+	int rm,lm;
+
+	if ((ghWndPlayerbar==NULL)||(ghWndMain==NULL)) return;
+
+	lm=8;rm=16;
+
+	GetWindowRect(ghWndMain, &rc);
+	pt.x=0; pt.y=0;
+	ClientToScreen(ghWndMain, &pt);
+
+	SetWindowPos(ghWndPlayerbar, HWND_TOP,
+		pt.x+lm, pt.y+GLOBAL.playerBarMargin,
+		rc.right-rc.left-lm-rm, GLOBAL.playerBarHeight,
+		SWP_NOACTIVATE|SWP_SHOWWINDOW);
+}
+
+
+//-----------------------------------------------------------------------
+//  canvas area
+//  Everything that lives inside the main window's client area has to stay
+//  between the top toolbar and the bottom status box. The two functions
+//  below return that usable area in main-window client coordinates.
+//-----------------------------------------------------------------------
+int canvas_top(void)
+{
+	return(GLOBAL.playerBarHeight + GLOBAL.playerBarMargin);
+}
+
+
+int canvas_bottom(void)
+{
+	RECT rc;
+	int statusH;
+
+	if (ghWndMain==NULL) return(0);
+
+	GetClientRect(ghWndMain, &rc);
+	if (GLOBAL.hidestatus) statusH=0;
+	else statusH = (GLOBAL.session_length==0)
+		? GLOBAL.statusWindowMargin
+		: GLOBAL.statusWindowMarginWithPlayer;
+
+	return(rc.bottom-statusH);
+}
+
+
+//-----------------------------------------------------------------------
+//  clamp_canvas_rect
+//  Limits a rectangle (given in main-window client coordinates) to the
+//  usable canvas area, so that object windows (oscilloscopes, displays,
+//  devices, ...) can neither slide underneath the top toolbar nor behind
+//  the bottom status box. Windows taller than the available space are
+//  shrunk accordingly.
+//-----------------------------------------------------------------------
+void clamp_canvas_rect(RECT * r)
+{
+	RECT rcClient;
+	int top,bottom,avail,w,h,x,y;
+
+	if (ghWndMain==NULL) return;
+
+	// while a design is being loaded the main window is not maximized yet,
+	// clamping would destroy the stored window positions
+	if (GLOBAL.loading) return;
+	if ((!IsWindowVisible(ghWndMain))||(IsIconic(ghWndMain))) return;
+
+	GetClientRect(ghWndMain, &rcClient);
+
+	top = canvas_top();
+	bottom = canvas_bottom();
+	avail = bottom-top;
+	if (avail<80) avail=80;
+
+	w = r->right-r->left;
+	h = r->bottom-r->top;
+	if (w<40) w=40;
+	if (h<40) h=40;
+	if (w>rcClient.right) w=rcClient.right;
+	if (h>avail) h=avail;
+
+	x = r->left;
+	y = r->top;
+
+	if (x+w>rcClient.right) x=rcClient.right-w;
+	if (x<0) x=0;
+	if (y<top) y=top;
+	if (y+h>bottom) y=bottom-h;
+	if (y<top) y=top;
+
+	r->left=x; r->top=y; r->right=x+w; r->bottom=y+h;
+}
+
+
+//-----------------------------------------------------------------------
+//  install_canvas_clamp
+//  Subclasses an object window so that every move/resize is kept inside
+//  the canvas area, and corrects its current geometry.
+//-----------------------------------------------------------------------
+#define CANVAS_CLAMP_SUBCLASS_ID 0xCA9C
+
+static void clamp_window_to_canvas(HWND hWnd)
+{
+	RECT r,c;
+
+	if ((hWnd==NULL)||(ghWndMain==NULL)) return;
+
+	GetWindowRect(hWnd, &r);
+	MapWindowPoints(NULL, ghWndMain, (LPPOINT)&r, 2);
+
+	c=r;
+	clamp_canvas_rect(&c);
+
+	if ((c.left!=r.left)||(c.top!=r.top)||(c.right!=r.right)||(c.bottom!=r.bottom))
+		MoveWindow(hWnd, c.left, c.top, c.right-c.left, c.bottom-c.top, TRUE);
+}
+
+
+static LRESULT CALLBACK CanvasClampSubclassProc(HWND hWnd, UINT msg, WPARAM wParam,
+                                               LPARAM lParam, UINT_PTR uId, DWORD_PTR ref)
+{
+	switch (msg)
+	{
+	case WM_WINDOWPOSCHANGING:
+		{
+			WINDOWPOS * wp=(WINDOWPOS *)lParam;
+
+			if ((ghWndMain!=NULL)&&(hWnd!=ghWndDesign)&&(GetParent(hWnd)==ghWndMain))
+			{
+				RECT r,c;
+				GetWindowRect(hWnd, &r);
+				MapWindowPoints(NULL, ghWndMain, (LPPOINT)&r, 2);
+
+				if (!(wp->flags & SWP_NOMOVE)) { r.left=wp->x; r.top=wp->y; }
+				if (!(wp->flags & SWP_NOSIZE)) { r.right=r.left+wp->cx; r.bottom=r.top+wp->cy; }
+
+				c=r;
+				clamp_canvas_rect(&c);
+
+				if ((c.left!=r.left)||(c.top!=r.top))
+				{
+					wp->x=c.left; wp->y=c.top;
+					wp->flags&=~SWP_NOMOVE;
+				}
+				if ((c.right-c.left)!=(r.right-r.left))
+				{
+					wp->cx=c.right-c.left;
+					wp->flags&=~SWP_NOSIZE;
+				}
+				if ((c.bottom-c.top)!=(r.bottom-r.top))
+				{
+					wp->cy=c.bottom-c.top;
+					wp->flags&=~SWP_NOSIZE;
+				}
+			}
+		}
+		break;
+
+	case WM_NCDESTROY:
+		RemoveWindowSubclass(hWnd, CanvasClampSubclassProc, uId);
+		break;
+	}
+	return DefSubclassProc(hWnd, msg, wParam, lParam);
+}
+
+
+void install_canvas_clamp(HWND hWnd)
+{
+	DWORD_PTR ref=0;
+
+	if ((hWnd==NULL)||(ghWndMain==NULL)) return;
+	if (hWnd==ghWndDesign) return;                     // the canvas itself
+	if (GetParent(hWnd)!=ghWndMain) return;            // only main-window children
+
+	if (!GetWindowSubclass(hWnd, CanvasClampSubclassProc, CANVAS_CLAMP_SUBCLASS_ID, &ref))
+		SetWindowSubclass(hWnd, CanvasClampSubclassProc, CANVAS_CLAMP_SUBCLASS_ID, 0);
+
+	// also correct the current geometry (canvas area may have changed)
+	clamp_window_to_canvas(hWnd);
+}
+
+
+static BOOL CALLBACK canvas_sweep_child(HWND hChild, LPARAM lParam)
+{
+	install_canvas_clamp(hChild);
+	return TRUE;
+}
+
+
+//-----------------------------------------------------------------------
+//  sweep_canvas_windows
+//  Makes sure that every object window has the canvas clamp installed.
+//  Object windows can be created at any time (also lazily, e.g. the meter
+//  display of a threshold object), so this runs periodically.
+//-----------------------------------------------------------------------
+void sweep_canvas_windows(void)
+{
+	if (ghWndMain==NULL) return;
+	EnumChildWindows(ghWndMain, canvas_sweep_child, 0);
+}
+
+
+//-----------------------------------------------------------------------
+//  update_canvas_window
+//  Fits the design canvas into the client area between the top toolbar
+//  and the bottom status box. A full screen Sessionmanager is resized
+//  the same way.
+//-----------------------------------------------------------------------
+void update_canvas_window(void)
+{
+	RECT rcClient;
+	int topH,statusH,designH,fullW,i;
+
+	if ((ghWndMain==NULL)||(ghWndDesign==NULL)) return;
+
+	GetClientRect(ghWndMain, &rcClient);
+
+	topH = canvas_top();
+	statusH = (GLOBAL.session_length==0)
+		? GLOBAL.statusWindowMargin
+		: GLOBAL.statusWindowMarginWithPlayer;
+	designH = rcClient.bottom - statusH - topH;
+	if (designH<50) designH=50;
+	fullW = rcClient.right;
+
+	SetWindowPos(ghWndDesign, NULL, 0, topH,
+		fullW, designH, SWP_NOZORDER|SWP_NOACTIVATE);
+
+	for (i=0;i<GLOBAL.objects;i++)
+	{
+		if ((objects[i]!=NULL)&&(objects[i]->displayWnd!=NULL)&&
+			(GetParent(objects[i]->displayWnd)==ghWndMain))
+		{
+			if (objects[i]->type==OB_SESSIONMANAGER)
+			{
+				SESSIONMANAGEROBJ * sm=(SESSIONMANAGEROBJ *)objects[i];
+				sm->left=0;
+				sm->top=topH;
+				sm->right=fullW;
+				sm->bottom=designH;
+				MoveWindow(objects[i]->displayWnd, 0, topH, fullW, designH, TRUE);
+			}
+		}
+	}
+
+	sweep_canvas_windows();
 }
 
 

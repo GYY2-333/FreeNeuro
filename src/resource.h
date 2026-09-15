@@ -1015,6 +1015,7 @@
 #define IDM_INSERT_EEG_PHYSIOAMP        32979
 #define IDM_INSERTMEDSCOPE              32980
 #define IDD_MEDSCOPEBOX                 273
+#define IDD_PLAYERBAR                   274
 #define IDC_MED_CHANNELS                1400
 #define IDC_MED_GLOW                    1401
 #define IDC_MED_GAIN                    1402
@@ -1028,7 +1029,7 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        274
+#define _APS_NEXT_RESOURCE_VALUE        275
 #define _APS_NEXT_COMMAND_VALUE         32981
 #define _APS_NEXT_CONTROL_VALUE         1568
 #define _APS_NEXT_SYMED_VALUE           110
