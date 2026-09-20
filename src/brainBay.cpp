@@ -53,6 +53,8 @@
 #include "ob_skindialog.h"
 #include "darkmode.h"
 #include "ob_neurobit.h"
+#include "ob_bandpower.h"
+#include "ob_artifact.h"
 
 // timer that periodically re-checks that object windows stay inside the
 // canvas area (below the top toolbar, above the status box)
@@ -433,6 +435,10 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 					break;	
 				case IDM_INSERTMEDSCOPE:create_object(OB_MEDSCOPE);
 					break;	
+				case IDM_INSERTBANDPOWER:create_object(OB_BANDPOWER);
+					break;
+				case IDM_INSERTARTIFACT:create_object(OB_ARTIFACT);
+					break;
 				case IDM_INSERTTRANSLATE:create_object(OB_TRANSLATE);						
 					break;
 				case IDM_INSERTSIGNAL:create_object(OB_SIGNAL);

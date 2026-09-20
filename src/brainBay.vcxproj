@@ -286,6 +286,8 @@
     <ClCompile Include="hid_physioamp.cpp" />
     <ClCompile Include="gl_modern.cpp" />
     <ClCompile Include="ob_medscope.cpp" />
+    <ClCompile Include="ob_bandpower.cpp" />
+    <ClCompile Include="ob_artifact.cpp" />
     <ClCompile Include="darkmode.cpp" />
     <ClCompile Include="ob_and.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
@@ -816,6 +818,8 @@
     <ClInclude Include="hid_physioamp.h" />
     <ClInclude Include="gl_modern.h" />
     <ClInclude Include="ob_medscope.h" />
+    <ClInclude Include="ob_bandpower.h" />
+    <ClInclude Include="ob_artifact.h" />
     <ClInclude Include="darkmode.h" />
     <ClInclude Include="highgui.h" />
     <ClInclude Include="matheval.h" />

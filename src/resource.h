@@ -1016,6 +1016,57 @@
 #define IDM_INSERTMEDSCOPE              32980
 #define IDD_MEDSCOPEBOX                 273
 #define IDD_PLAYERBAR                   274
+#define IDD_BANDPOWERBOX                275
+#define IDD_ARTIFACTBOX                 276
+// ---------------------------------------------------------------------------
+//  Band-Power / Ratio object
+// ---------------------------------------------------------------------------
+#define IDC_BP_FFTINFO                  1600
+#define IDC_BP_FFTSECS                  1609
+#define IDC_BP_LOGVALUES                1620
+#define IDC_BP_WINDOW                   1601
+#define IDC_BP_HOPMS                    1602
+#define IDC_BP_SMOOTH                   1603
+#define IDC_BP_UNITS                    1604
+#define IDC_BP_NOTCHF                   1605
+#define IDC_BP_NOTCHQ                   1606
+#define IDC_BP_LP                       1607
+#define IDC_BP_SELFTEST                 1608
+#define IDC_BP_DELTA_LO                 1610
+#define IDC_BP_DELTA_HI                 1611
+#define IDC_BP_THETA_LO                 1612
+#define IDC_BP_THETA_HI                 1613
+#define IDC_BP_ALPHA_LO                 1614
+#define IDC_BP_ALPHA_HI                 1615
+#define IDC_BP_BETA_LO                  1616
+#define IDC_BP_BETA_HI                  1617
+#define IDC_BP_GAMMA_LO                 1618
+#define IDC_BP_GAMMA_HI                 1619
+#define IDC_BP_V_DELTA                  1625
+#define IDC_BP_V_THETA                  1626
+#define IDC_BP_V_ALPHA                  1627
+#define IDC_BP_V_BETA                   1628
+#define IDC_BP_V_GAMMA                  1629
+#define IDC_BP_V_TBR                    1630
+#define IDC_BP_V_TAR                    1631
+#define IDC_BP_V_SF                     1632
+#define IDC_BP_V_IAF                    1633
+// ---------------------------------------------------------------------------
+//  Artifact / Signal-Quality object
+// ---------------------------------------------------------------------------
+#define IDC_AR_PPTHRESHOLD              1640
+#define IDC_AR_BLOCKMS                  1641
+#define IDC_AR_EMGENABLE                1642
+#define IDC_AR_EMGTHRESHOLD             1643
+#define IDC_AR_EMGCUTOFF                1644
+#define IDC_AR_CLIPLEVEL                1645
+#define IDC_AR_SELFTEST                 1646
+#define IDC_AR_V_QUALITY                1650
+#define IDC_AR_V_ARTIFACT               1651
+#define IDC_AR_V_PPAMP                  1652
+#define IDC_AR_V_EMG                    1653
+#define IDM_INSERTBANDPOWER             32981
+#define IDM_INSERTARTIFACT              32982
 #define IDC_MED_CHANNELS                1400
 #define IDC_MED_GLOW                    1401
 #define IDC_MED_GAIN                    1402
@@ -1029,8 +1080,8 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        275
-#define _APS_NEXT_COMMAND_VALUE         32981
+#define _APS_NEXT_RESOURCE_VALUE        277
+#define _APS_NEXT_COMMAND_VALUE         32983
 #define _APS_NEXT_CONTROL_VALUE         1568
 #define _APS_NEXT_SYMED_VALUE           110
 #endif

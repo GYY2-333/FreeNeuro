@@ -28,6 +28,11 @@
 
 #include "brainBay.h"
 
+// include guard: the class below is redefined otherwise when this header is
+// reached through more than one include path (e.g. via ob_bandpower.h)
+#if !defined(OB_FFT_H)
+#define OB_FFT_H
+
 
 #define DEF_ZOOM 100
 #define DEF_STARTBAND 1
@@ -95,3 +100,5 @@ protected:
 	~FFTOBJ();
    
 };
+
+#endif     // OB_FFT_H

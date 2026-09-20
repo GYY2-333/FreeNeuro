@@ -98,6 +98,8 @@
 #include "ob_osc_sender.h"
 #include "ob_biosemi.h"
 #include "ob_brainflow.h"
+#include "ob_bandpower.h"
+#include "ob_artifact.h"
 #include "ob_medscope.h"
 
 //
@@ -198,6 +200,10 @@ void create_object(int type)
 							 actobject->object_size = sizeof(GENERIC_BLE_RECEIVEROBJ); break;
 		case OB_MEDSCOPE:    actobject=new MEDSCOPEOBJ(GLOBAL.objects);
 							 actobject->object_size=sizeof(MEDSCOPEOBJ);break;
+		case OB_BANDPOWER:   actobject=new BANDPOWEROBJ(GLOBAL.objects);
+							 actobject->object_size=sizeof(BANDPOWEROBJ);break;
+		case OB_ARTIFACT:    actobject=new ARTIFACTOBJ(GLOBAL.objects);
+							 actobject->object_size=sizeof(ARTIFACTOBJ);break;
 		case OB_LSL_RECEIVER:actobject=new LSL_RECEIVEOBJ(GLOBAL.objects);             // KDS  240829
 							 actobject->object_size=sizeof(LSL_RECEIVEOBJ);break;							 
 		case OB_DOKU:        actobject=new DOKUOBJ(GLOBAL.objects); 
