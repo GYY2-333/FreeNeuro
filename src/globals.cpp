@@ -711,6 +711,21 @@ void register_classes (HINSTANCE hInstance)
 
 	wcex.cbSize = sizeof(WNDCLASSEX);
 	wcex.style = 0;//CS_HREDRAW | CS_VREDRAW;
+	wcex.lpfnWndProc = (WNDPROC)BandPanelWndHandler;
+	wcex.cbClsExtra = 0;
+	wcex.cbWndExtra = 0;
+	wcex.hInstance = hInstance;
+	wcex.hIcon = LoadIcon(hInstance, (LPCTSTR)IDI_MYEEG);
+	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wcex.hbrBackground	= (HBRUSH)(COLOR_WINDOW+1);
+	wcex.lpszMenuName	= NULL;
+	wcex.lpszClassName	= "BandPanel_Class";
+	wcex.hIconSm		= LoadIcon(hInstance, (LPCTSTR)IDI_SMALL);
+	if(!RegisterClassEx(&wcex))
+        report_error("Can't register Band-Panel-Windowclass");
+
+	wcex.cbSize = sizeof(WNDCLASSEX);
+	wcex.style = 0;//CS_HREDRAW | CS_VREDRAW;
 	wcex.lpfnWndProc = (WNDPROC)ShadowWndHandler;
 	wcex.cbClsExtra = 0;
 	wcex.cbWndExtra = 0;

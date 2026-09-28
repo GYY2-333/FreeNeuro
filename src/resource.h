@@ -1024,6 +1024,13 @@
 #define IDC_BP_FFTINFO                  1600
 #define IDC_BP_FFTSECS                  1609
 #define IDC_BP_LOGVALUES                1620
+#define IDC_BP_SHOWPANEL                1621
+#define IDC_BP_COLUMNS                  1622
+#define IDC_BP_PANELSIZE                1623
+#define IDC_BP_SHOWUNITS                1624
+#define IDC_BP_VALCOL                   1634
+#define IDC_BP_BKCOL                    1635
+#define IDC_BP_CAPTCOL                  1636
 #define IDC_BP_WINDOW                   1601
 #define IDC_BP_HOPMS                    1602
 #define IDC_BP_SMOOTH                   1603
@@ -1051,6 +1058,44 @@
 #define IDC_BP_V_TAR                    1631
 #define IDC_BP_V_SF                     1632
 #define IDC_BP_V_IAF                    1633
+// band edges and read-outs of the ADHD protocol set
+#define IDC_BP_HBETA_LO                 1670
+#define IDC_BP_HBETA_HI                 1671
+#define IDC_BP_SMR_LO                   1672
+#define IDC_BP_SMR_HI                   1673
+#define IDC_BP_BETA2_LO                 1674
+#define IDC_BP_BETA2_HI                 1675
+#define IDC_BP_V_HBETA                  1660
+#define IDC_BP_V_SMR                    1661
+#define IDC_BP_V_BETA2                  1662
+#define IDC_BP_V_DT                     1663
+#define IDC_BP_V_HBB                    1664
+#define IDC_BP_V_TSMR                   1665
+#define IDC_BP_V_TB2                    1666
+#define IDC_BP_V_AHB                    1667
+// labels of the toolbox, set at run time so that they can show the greek
+// symbols of the protocol design (the .rc only carries ASCII placeholders)
+#define IDC_BP_LB_B0                    1690
+#define IDC_BP_LB_B1                    1691
+#define IDC_BP_LB_B2                    1692
+#define IDC_BP_LB_B3                    1693
+#define IDC_BP_LB_B4                    1694
+#define IDC_BP_LB_B5                    1695
+#define IDC_BP_LB_B6                    1696
+#define IDC_BP_LB_V0                    1700
+#define IDC_BP_LB_V1                    1701
+#define IDC_BP_LB_V2                    1702
+#define IDC_BP_LB_V3                    1703
+#define IDC_BP_LB_V4                    1704
+#define IDC_BP_LB_V5                    1705
+#define IDC_BP_LB_V6                    1706
+#define IDC_BP_LB_V7                    1707
+#define IDC_BP_LB_V8                    1708
+#define IDC_BP_LB_V9                    1709
+#define IDC_BP_LB_V10                   1710
+#define IDC_BP_LB_V11                   1711
+#define IDC_BP_LB_V12                   1712
+#define IDC_BP_LB_V13                   1713
 // ---------------------------------------------------------------------------
 //  Artifact / Signal-Quality object
 // ---------------------------------------------------------------------------

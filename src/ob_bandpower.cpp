@@ -18,10 +18,78 @@
 #include "brainBay.h"
 #include "ob_bandpower.h"
 
-// names of the frequency bands, in the order of the output ports
-static const char *bp_bandname[BP_BANDS] = { "delta", "theta", "alpha", "beta", "gamma" };
+// names of the frequency bands, in the order of the output ports 0 .. 6
+static const char *bp_bandname[BP_BANDS] =
+{ "delta", "theta", "alpha", "beta", "hbeta", "smr", "beta2" };
+
+// every ratio is one band divided by another band: {numerator, denominator}
+// the order matches the output ports 7 .. 13 and the panel cells 7 .. 13
+static const int bp_ratioidx[BP_RATIOS][2] =
+{
+	{ 0, 1 },   // delta / theta
+	{ 1, 3 },   // theta / beta
+	{ 4, 3 },   // hbeta / beta
+	{ 1, 5 },   // theta / smr
+	{ 1, 6 },   // theta / beta2
+	{ 1, 2 },   // theta / alpha
+	{ 2, 4 }    // alpha / hbeta
+};
 
 #define BP_PI 3.14159265358979323846
+
+// a ratio is meaningless when the divisor is below the noise floor - report 0
+// instead of a huge number (an idle band, e.g. alpha with eyes open).
+// the result is also clamped to the range that the ratio ports advertise,
+// so that a noise band can never produce an unreadable value.
+#define BP_RATIO_EPS 0.05f
+#define BP_RATIO_MAX 10.0f
+
+static float bp_ratio(float num, float den)
+{
+	float r;
+
+	if (den<BP_RATIO_EPS) return(0.0f);
+	r=num/den;
+	if (r<0.0f) r=0.0f;
+	if (r>BP_RATIO_MAX) r=BP_RATIO_MAX;
+	return(r);
+}
+
+
+// long names of the bands, used for the port descriptions.  "Q-beta" is the
+// 13-21 Hz band and "beta" the 16-21 Hz band, exactly as printed in the design.
+static const char *bp_descname[BP_BANDS] =
+{ "Delta", "Theta", "Alpha", "Q-beta", "High-beta", "SMR", "Beta" };
+
+// range/dimension of a band-power port, depending on the output unit
+static void bp_unit_range(OUTPORTStruct *p, int units)
+{
+	if (units==1)                                       // dB
+	{
+		strcpy(p->out_dim,"dB");
+		p->out_min=-20.0f;
+		p->out_max=60.0f;
+	}
+	else if (units==2)                                  // relative power
+	{
+		strcpy(p->out_dim,"%");
+		p->out_min=0.0f;
+		p->out_max=100.0f;
+	}
+	else                                                // uV^2
+	{
+		strcpy(p->out_dim,"uV^2");
+		p->out_min=0.0f;
+		p->out_max=1000.0f;
+	}
+}
+
+static void bp_ratio_range(OUTPORTStruct *p)
+{
+	strcpy(p->out_dim,"ratio");
+	p->out_min=0.0f;
+	p->out_max=BP_RATIO_MAX;
+}
 
 
 /* -------------------------------------------------------------------------
@@ -115,27 +183,27 @@ BANDPOWEROBJ::BANDPOWEROBJ(int num) : BASE_CL()
 	width=90;
 
 	// ---- ports
-	outports=9;
+	outports=BP_PORTS;
 	inports=2;
 
+	// 0 .. 6 : the band powers (the descriptions are filled in by
+	// update_outport_ranges(), which knows the current band edges)
+	// the names follow the design: Q-beta = 13-21 Hz, beta = 16-21 Hz
 	strcpy(out_ports[0].out_name,"delta");
-	strcpy(out_ports[0].out_desc,"Delta power (1 - 4 Hz)");
 	strcpy(out_ports[1].out_name,"theta");
-	strcpy(out_ports[1].out_desc,"Theta power (4 - 8 Hz)");
 	strcpy(out_ports[2].out_name,"alpha");
-	strcpy(out_ports[2].out_desc,"Alpha power (8 - 13 Hz)");
-	strcpy(out_ports[3].out_name,"beta");
-	strcpy(out_ports[3].out_desc,"Beta power (13 - 30 Hz)");
-	strcpy(out_ports[4].out_name,"gamma");
-	strcpy(out_ports[4].out_desc,"Gamma power (30 - 45 Hz)");
-	strcpy(out_ports[5].out_name,"th/beta");
-	strcpy(out_ports[5].out_desc,"Theta/Beta ratio (TBR)");
-	strcpy(out_ports[6].out_name,"th/alpha");
-	strcpy(out_ports[6].out_desc,"Theta/Alpha ratio");
-	strcpy(out_ports[7].out_name,"slow/fast");
-	strcpy(out_ports[7].out_desc,"(delta+theta)/(alpha+beta)");
-	strcpy(out_ports[8].out_name,"IAF");
-	strcpy(out_ports[8].out_desc,"Individual alpha peak frequency");
+	strcpy(out_ports[3].out_name,"Qbeta");
+	strcpy(out_ports[4].out_name,"hbeta");
+	strcpy(out_ports[5].out_name,"smr");
+	strcpy(out_ports[6].out_name,"beta");
+	// 7 .. 13 : the band ratios
+	strcpy(out_ports[7].out_name,"delta/theta");
+	strcpy(out_ports[8].out_name,"theta/Qbeta");
+	strcpy(out_ports[9].out_name,"hbeta/Qbeta");
+	strcpy(out_ports[10].out_name,"theta/smr");
+	strcpy(out_ports[11].out_name,"theta/beta");
+	strcpy(out_ports[12].out_name,"theta/alpha");
+	strcpy(out_ports[13].out_name,"alpha/hbeta");
 
 	for (i=0;i<outports;i++)
 	{
@@ -171,27 +239,48 @@ BANDPOWEROBJ::BANDPOWEROBJ(int num) : BASE_CL()
 	selftest=0;
 	logvalues=0;
 
-	band_lo[0]=1.0f;   band_hi[0]=4.0f;     // delta
-	band_lo[1]=4.0f;   band_hi[1]=8.0f;     // theta
-	band_lo[2]=8.0f;   band_hi[2]=13.0f;    // alpha
-	band_lo[3]=13.0f;  band_hi[3]=30.0f;    // beta
-	band_lo[4]=30.0f;  band_hi[4]=45.0f;    // gamma
+	// ---- indicator panel defaults (dark background, big blue digits)
+	left=360; top=70; right=620; bottom=690;
+	strcpy(wndcaption,"Band-Power");
+	showpanel=1;
+	columns=2;                              // 7 rows x 2 columns, like the protocol
+	panelsize=24;
+	panelrows=BP_PANELCELLS/2;
+	showunits=1;
+	panelbk=RGB(16,16,20);
+	panelcaptcol=RGB(150,150,160);
+	panelvalcol=RGB(80,170,255);
+	valfont=NULL;
+	captfont=NULL;
+
+	// ---- band edges of the ADHD protocol design (Hz), bands may overlap
+	band_lo[0]=0.5f;  band_hi[0]=4.0f;      // delta
+	band_lo[1]=4.0f;  band_hi[1]=8.0f;      // theta
+	band_lo[2]=8.0f;  band_hi[2]=12.0f;     // alpha
+	band_lo[3]=13.0f; band_hi[3]=21.0f;     // beta
+	band_lo[4]=20.0f; band_hi[4]=30.0f;     // hbeta
+	band_lo[5]=12.0f; band_hi[5]=15.0f;     // smr
+	band_lo[6]=16.0f; band_hi[6]=21.0f;     // beta2
 
 	fftsize=(int)((double)fft_seconds*(double)PACKETSPERSECOND);
 	hop=0;
 	last_fs=0;
 	updates=0;
 	gate=1.0f;
-	iaf=10.0f;
 
 	update_outport_ranges();
 	reset_dsp();
 	update_filters();
+
+	update_panel_fonts();
+	create_panel_window();
 }
 
 
 BANDPOWEROBJ::~BANDPOWEROBJ()
 {
+	if (valfont) { DeleteObject(valfont); valfont=NULL; }
+	if (captfont) { DeleteObject(captfont); captfont=NULL; }
 }
 
 
@@ -209,6 +298,7 @@ void BANDPOWEROBJ::reset_dsp(void)
 	gate=1.0f;
 	testphase1=0.0;
 	testphase2=0.0;
+	testphase3=0.0;
 
 	for (i=0;i<BP_BANDS;i++) { rawpow[i]=0.0f; avgpow[i]=0.0f; }
 
@@ -263,38 +353,21 @@ void BANDPOWEROBJ::update_outport_ranges(void)
 {
 	int i;
 
-	for (i=0;i<BP_BANDS;i++)
+	// 0 .. 6 : the band powers (the descriptions follow the current band edges)
+	for (i=0;i<=6;i++)
 	{
-		if (units==1)                                 // dB
-		{
-			strcpy(out_ports[i].out_dim,"dB");
-			out_ports[i].out_min=-20.0f;
-			out_ports[i].out_max=60.0f;
-		}
-		else if (units==2)                            // relative power
-		{
-			strcpy(out_ports[i].out_dim,"%");
-			out_ports[i].out_min=0.0f;
-			out_ports[i].out_max=100.0f;
-		}
-		else                                          // uV^2
-		{
-			strcpy(out_ports[i].out_dim,"uV^2");
-			out_ports[i].out_min=0.0f;
-			out_ports[i].out_max=1000.0f;
-		}
+		bp_unit_range(&out_ports[i],units);
+		sprintf(out_ports[i].out_desc,"%s power (%.1f - %.1f Hz)",
+			bp_descname[i],band_lo[i],band_hi[i]);
 	}
 
-	for (i=BP_BANDS;i<8;i++)
+	// 7 .. 13 : the band ratios
+	for (i=0;i<BP_RATIOS;i++)
 	{
-		strcpy(out_ports[i].out_dim,"ratio");
-		out_ports[i].out_min=0.0f;
-		out_ports[i].out_max=10.0f;
+		bp_ratio_range(&out_ports[7+i]);
+		sprintf(out_ports[7+i].out_desc,"%s / %s ratio",
+			bp_descname[bp_ratioidx[i][0]],bp_descname[bp_ratioidx[i][1]]);
 	}
-
-	strcpy(out_ports[8].out_dim,"Hz");
-	out_ports[8].out_min=4.0f;
-	out_ports[8].out_max=20.0f;
 }
 
 
@@ -314,6 +387,15 @@ float BANDPOWEROBJ::output_value(int band, float total)
 		return((float)(100.0*(double)avgpow[band]/(double)total));
 	}
 	return(avgpow[band]);
+}
+
+
+// one of the band/band ratios (index 0 .. BP_RATIOS-1, port 7 .. 13)
+float BANDPOWEROBJ::ratio_value(int r)
+{
+	if (r<0) r=0;
+	if (r>=BP_RATIOS) r=BP_RATIOS-1;
+	return(bp_ratio(avgpow[bp_ratioidx[r][0]],avgpow[bp_ratioidx[r][1]]));
 }
 
 
@@ -353,6 +435,19 @@ void BANDPOWEROBJ::load(HANDLE hFile)
 	load_property("bp_selftest",P_INT,&selftest);
 	load_property("bp_logvalues",P_INT,&logvalues);
 
+	load_property("bp_panelcaption",P_STRING,wndcaption);
+	load_property("bp_showpanel",P_INT,&showpanel);
+	load_property("bp_columns",P_INT,&columns);
+	load_property("bp_panelsize",P_INT,&panelsize);
+	load_property("bp_showunits",P_INT,&showunits);
+	load_property("bp_valcol",P_INT,&panelvalcol);
+	load_property("bp_bkcol",P_INT,&panelbk);
+	load_property("bp_captcol",P_INT,&panelcaptcol);
+	load_property("bp_paneltop",P_INT,&top);
+	load_property("bp_panelleft",P_INT,&left);
+	load_property("bp_panelright",P_INT,&right);
+	load_property("bp_panelbottom",P_INT,&bottom);
+
 	for (i=0;i<BP_BANDS;i++)
 	{
 		sprintf(pname,"bp_%slo",bp_bandname[i]);
@@ -365,6 +460,16 @@ void BANDPOWEROBJ::load(HANDLE hFile)
 	reset_dsp();
 	last_fs=0;                     // force the filters to be rebuilt
 	update_filters();
+
+	// apply the panel settings to the display window
+	update_panel_fonts();
+	if (displayWnd!=NULL)
+	{
+		SetWindowText(displayWnd,wndcaption);
+		MoveWindow(displayWnd,left,top,right-left,bottom-top,TRUE);
+		ShowWindow(displayWnd, showpanel ? SW_SHOW : SW_HIDE);
+		InvalidateRect(displayWnd,NULL,TRUE);
+	}
 }
 
 
@@ -386,6 +491,19 @@ void BANDPOWEROBJ::save(HANDLE hFile)
 	save_property(hFile,"bp_selftest",P_INT,&selftest);
 	save_property(hFile,"bp_logvalues",P_INT,&logvalues);
 
+	save_property(hFile,"bp_panelcaption",P_STRING,wndcaption);
+	save_property(hFile,"bp_showpanel",P_INT,&showpanel);
+	save_property(hFile,"bp_columns",P_INT,&columns);
+	save_property(hFile,"bp_panelsize",P_INT,&panelsize);
+	save_property(hFile,"bp_showunits",P_INT,&showunits);
+	save_property(hFile,"bp_valcol",P_INT,&panelvalcol);
+	save_property(hFile,"bp_bkcol",P_INT,&panelbk);
+	save_property(hFile,"bp_captcol",P_INT,&panelcaptcol);
+	save_property(hFile,"bp_paneltop",P_INT,&top);
+	save_property(hFile,"bp_panelleft",P_INT,&left);
+	save_property(hFile,"bp_panelright",P_INT,&right);
+	save_property(hFile,"bp_panelbottom",P_INT,&bottom);
+
 	for (i=0;i<BP_BANDS;i++)
 	{
 		sprintf(pname,"bp_%slo",bp_bandname[i]);
@@ -399,20 +517,23 @@ void BANDPOWEROBJ::save(HANDLE hFile)
 void BANDPOWEROBJ::work(void)
 {
 	double x;
-	double sum,wfac,peak,pw,alpha_s,dt;
-	int b,k,k0,k1,kmax;
+	double sum,wfac,alpha_s,dt;
+	int b,k,k0,k1;
 	float total;
 
 	if (PACKETSPERSECOND!=last_fs) update_filters();
 
 	if (selftest)
 	{
-		// internal verification signal: 6 Hz / 20 uV (theta) + 20 Hz / 10 uV (beta)
-		x = 20.0*sin(testphase1) + 10.0*sin(testphase2);
+		// internal verification signal: 6 Hz / 20 uV (theta) + 13.5 Hz / 10 uV
+		// (smr, beta) + 25 Hz / 10 uV (hbeta)
+		x = 20.0*sin(testphase1) + 10.0*sin(testphase2) + 10.0*sin(testphase3);
 		testphase1 += 2.0*BP_PI*6.0/(double)PACKETSPERSECOND;
-		testphase2 += 2.0*BP_PI*20.0/(double)PACKETSPERSECOND;
+		testphase2 += 2.0*BP_PI*13.5/(double)PACKETSPERSECOND;
+		testphase3 += 2.0*BP_PI*25.0/(double)PACKETSPERSECOND;
 		if (testphase1>=2.0*BP_PI) testphase1-=2.0*BP_PI;
 		if (testphase2>=2.0*BP_PI) testphase2-=2.0*BP_PI;
+		if (testphase3>=2.0*BP_PI) testphase3-=2.0*BP_PI;
 	}
 	else
 	{
@@ -457,27 +578,6 @@ void BANDPOWEROBJ::work(void)
 			if (rawpow[b]<0.0f) rawpow[b]=0.0f;
 		}
 
-		// individual alpha peak frequency (parabolic interpolation)
-		k0=(int)ceil((double)band_lo[2]*(double)fftsize/(double)PACKETSPERSECOND);
-		k1=(int)floor((double)band_hi[2]*(double)fftsize/(double)PACKETSPERSECOND);
-		if (k0<1) k0=1;
-		if (k1>(fftsize>>1)-2) k1=(fftsize>>1)-2;
-		if (k1<k0) k1=k0;
-		kmax=k0; peak=-1.0;
-		for (k=k0;k<=k1;k++)
-			if ((double)fftbands[k]>peak) { peak=(double)fftbands[k]; kmax=k; }
-
-		pw=(double)kmax*(double)PACKETSPERSECOND/(double)fftsize;
-		if ((kmax>k0)&&(kmax<k1)&&(peak>0.0))
-		{
-			double pa=(double)fftbands[kmax-1];
-			double pb=(double)fftbands[kmax];
-			double pc=(double)fftbands[kmax+1];
-			double den=pa-2.0*pb+pc;
-			if (den<0.0)
-				pw += 0.5*(pa-pc)/den*(double)PACKETSPERSECOND/(double)fftsize;
-		}
-
 		// ---- smoothing
 		dt=(double)hop/(double)PACKETSPERSECOND;
 		alpha_s=(smooth>0.01f) ? (1.0-exp(-dt/(double)smooth)) : 1.0;
@@ -487,36 +587,317 @@ void BANDPOWEROBJ::work(void)
 		if (updates<1)
 		{
 			for (b=0;b<BP_BANDS;b++) avgpow[b]=rawpow[b];
-			iaf=(float)pw;
 		}
 		else if (gate>0.5f)
 		{
 			for (b=0;b<BP_BANDS;b++)
 				avgpow[b]+=(float)(alpha_s*((double)rawpow[b]-(double)avgpow[b]));
-			iaf+=(float)(alpha_s*(pw-(double)iaf));
 		}
 
 		updates++;
 		if (updates>2000000000) updates=2000000000;
 
 		if (((selftest)||(logvalues))&&((updates%10)==0))
-			write_logfile("bandpower: delta=%.1f theta=%.1f alpha=%.1f beta=%.1f gamma=%.1f theta/beta=%.3f iaf=%.2f",
-				avgpow[0], avgpow[1], avgpow[2], avgpow[3], avgpow[4],
-				(avgpow[3]>0.0f) ? (avgpow[1]/avgpow[3]) : 0.0f, iaf);
+			write_logfile("bandpower: delta=%.1f theta=%.1f alpha=%.1f beta=%.1f hbeta=%.1f smr=%.1f beta2=%.1f | d/t=%.3f t/b=%.3f hb/b=%.3f t/smr=%.3f t/b2=%.3f t/a=%.3f a/hb=%.3f",
+				avgpow[0], avgpow[1], avgpow[2], avgpow[3], avgpow[4], avgpow[5], avgpow[6],
+				ratio_value(0), ratio_value(1), ratio_value(2), ratio_value(3),
+				ratio_value(4), ratio_value(5), ratio_value(6));
 	}
 
-	// ---- outputs
-	total=avgpow[0]+avgpow[1]+avgpow[2]+avgpow[3]+avgpow[4];
+	// ---- outputs: the 7 band powers and the 7 band ratios
+	total=0.0f;
+	for (b=0;b<BP_BANDS;b++) total+=avgpow[b];
 
-	for (b=0;b<BP_BANDS;b++) pass_values(b, output_value(b,total));
+	for (b=0;b<=6;b++) pass_values(b, output_value(b,total));   // band powers
+	for (b=0;b<BP_RATIOS;b++) pass_values(7+b, ratio_value(b)); // band ratios
 
-	pass_values(5,(avgpow[3]>0.0f) ? (avgpow[1]/avgpow[3]) : 0.0f);                  // theta/beta
-	pass_values(6,(avgpow[2]>0.0f) ? (avgpow[1]/avgpow[2]) : 0.0f);                  // theta/alpha
-	pass_values(7,((avgpow[2]+avgpow[3])>0.0f)
-		? ((avgpow[0]+avgpow[1])/(avgpow[2]+avgpow[3])) : 0.0f);                     // slow/fast
-	pass_values(8,iaf);                                                              // IAF
+	// ---- indicator panel
+	if ((displayWnd!=NULL)&&(!TIMING.draw_update)&&(!GLOBAL.fly))
+		InvalidateRect(displayWnd,NULL,FALSE);
 
 	if ((hDlg==ghWndToolbox)&&(!TIMING.dialog_update)) update_dialog_values(total);
+}
+
+
+/* -------------------------------------------------------------------------
+   indicator panel (own display window)
+   ------------------------------------------------------------------------- */
+
+// captions of the panel cells: cells 0 .. 6 are the band powers, cells 7 .. 13
+// the ratios - exactly the parameter set of the protocol design.  The greek
+// letters are written with \u escapes in a wide literal, so that the source
+// file encoding does not matter; bp_ansi() converts them to the code page of
+// the window at draw time.
+static const wchar_t *bp_cellcaption[BP_PANELCELLS] =
+{
+	L"\u03B4",              // delta
+	L"\u03B8",              // theta
+	L"\u03B1",              // alpha
+	L"Q\u03B2",             // beta (13 - 21 Hz), as printed in the protocol design
+	L"H\u03B2",             // high beta
+	L"SMR",                 // sensorimotor rhythm
+	L"\u03B2",              // beta2 (16 - 21 Hz)
+	L"\u03B4/\u03B8",       // delta / theta
+	L"\u03B8/Q\u03B2",      // theta / beta
+	L"H\u03B2/Q\u03B2",     // hbeta / beta
+	L"\u03B8/SMR",          // theta / smr
+	L"\u03B8/\u03B2",       // theta / beta2
+	L"\u03B8/\u03B1",       // theta / alpha
+	L"\u03B1/H\u03B2"       // alpha / hbeta
+};
+
+static void bp_ansi(const wchar_t *w, char *out, int size)
+{
+	out[0]=0;
+	WideCharToMultiByte(CP_ACP,0,w,-1,out,size,NULL,NULL);
+	out[size-1]=0;
+}
+
+
+void BANDPOWEROBJ::create_panel_window(void)
+{
+	if(!(displayWnd=CreateWindow("BandPanel_Class", wndcaption,
+		WS_CLIPSIBLINGS | WS_CHILD | WS_CAPTION | WS_THICKFRAME,
+		left, top, right-left, bottom-top, ghWndMain, NULL, hInst, NULL)))
+	{
+		report_error("can't create Band-Power panel window");
+		return;
+	}
+
+	SetWindowLong(displayWnd, GWL_STYLE, GetWindowLong(displayWnd, GWL_STYLE) | WS_SIZEBOX);
+	ShowWindow(displayWnd, showpanel ? SW_SHOW : SW_HIDE);
+	UpdateWindow(displayWnd);
+}
+
+
+void BANDPOWEROBJ::update_panel_fonts(void)
+{
+	int dpi=GetDeviceCaps(GetDC(NULL), LOGPIXELSY);
+	int captsize;
+
+	if (valfont)  { DeleteObject(valfont);  valfont=NULL; }
+	if (captfont) { DeleteObject(captfont); captfont=NULL; }
+
+	if (panelsize<8) panelsize=8;
+	if (panelsize>200) panelsize=200;
+	captsize=panelsize/3;
+	if (captsize<9) captsize=9;
+
+	valfont=CreateFont(-MulDiv(panelsize,dpi,72),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,
+		OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,"Arial");
+	captfont=CreateFont(-MulDiv(captsize,dpi,72),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,
+		OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,"Arial");
+}
+
+
+//  caption of one panel cell, e.g. "theta  [uV^2]" / "theta/beta  [ratio]"
+const char *BANDPOWEROBJ::panel_caption(int cell)
+{
+	static char cap[80];
+	char sym[40];
+	const char *unit;
+
+	if (cell<0) cell=0;
+	if (cell>=BP_PANELCELLS) cell=BP_PANELCELLS-1;
+
+	if (cell<7)                                         // band powers
+		unit=(units==1) ? "dB" : ((units==2) ? "%" : "uV^2");
+	else                                                // band ratios
+		unit="ratio";
+
+	bp_ansi(bp_cellcaption[cell],sym,40);
+
+	if (showunits) sprintf(cap,"%s  [%s]",sym,unit);
+	else strcpy(cap,sym);
+
+	return(cap);
+}
+
+
+void BANDPOWEROBJ::panel_value_string(int cell, float total, char * out)
+{
+	float v;
+	int digits;
+
+	if (cell<0) cell=0;
+	if (cell>=BP_PANELCELLS) cell=BP_PANELCELLS-1;
+
+	if (cell<7)
+	{
+		v=output_value(cell,total);                     // band power, unit aware
+		digits=1;
+	}
+	else
+	{
+		v=ratio_value(cell-7);                          // band ratio
+		digits=3;
+	}
+
+	if (v>=1000.0f) digits=0;
+	else if ((v>=100.0f)&&(digits>1)) digits=1;
+
+	sprintf(out,"%.*f",digits,v);
+}
+
+
+void BANDPOWEROBJ::draw_panel(void)
+{
+	PAINTSTRUCT ps;
+	HDC hdc,memdc;
+	HBITMAP membmp,oldbmp;
+	RECT rc,cell,cap,vr;
+	HBRUSH bkbrush;
+	HPEN pen,oldpen;
+	char buf[40];
+	int i,col,row,cw,ch,saved;
+	float total;
+
+	if (displayWnd==NULL) return;
+
+	GetClientRect(displayWnd,&rc);
+	if ((rc.right<1)||(rc.bottom<1)) return;
+
+	hdc=BeginPaint(displayWnd,&ps);
+
+	memdc=CreateCompatibleDC(hdc);
+	membmp=CreateCompatibleBitmap(hdc,rc.right,rc.bottom);
+	oldbmp=(HBITMAP)SelectObject(memdc,membmp);
+
+	bkbrush=CreateSolidBrush(panelbk);
+	FillRect(memdc,&rc,bkbrush);
+	DeleteObject(bkbrush);
+
+	if (columns<1) columns=1;
+	if (columns>BP_PANELCELLS) columns=BP_PANELCELLS;
+	panelrows=(BP_PANELCELLS+columns-1)/columns;
+
+	cw=rc.right/columns;   if (cw<1) cw=1;
+	ch=rc.bottom/panelrows; if (ch<1) ch=1;
+
+	total=avgpow[0]+avgpow[1]+avgpow[2]+avgpow[3]+avgpow[4];
+
+	SetBkMode(memdc,TRANSPARENT);
+
+	pen=CreatePen(PS_SOLID,1,RGB(70,70,82));
+	oldpen=(HPEN)SelectObject(memdc,pen);
+
+	for (i=0;i<BP_PANELCELLS;i++)
+	{
+		col=i%columns;
+		row=i/columns;
+
+		cell.left=rc.left+col*cw;
+		cell.top=rc.top+row*ch;
+		cell.right=cell.left+cw;
+		cell.bottom=cell.top+ch;
+
+		MoveToEx(memdc,cell.left,cell.bottom-1,NULL);
+		LineTo(memdc,cell.right-1,cell.bottom-1);
+		MoveToEx(memdc,cell.right-1,cell.top,NULL);
+		LineTo(memdc,cell.right-1,cell.bottom-1);
+
+		cap=cell;
+		cap.left+=6;
+		cap.right-=4;
+		cap.bottom=cell.top+(ch*28)/100;
+
+		// clip to the cell so a large font cannot bleed into the neighbour cells
+		saved=SaveDC(memdc);
+		IntersectClipRect(memdc,cell.left,cell.top,cell.right,cell.bottom);
+
+		SelectObject(memdc,captfont);
+		SetTextColor(memdc,panelcaptcol);
+		DrawText(memdc,panel_caption(i),-1,&cap,DT_SINGLELINE|DT_LEFT|DT_VCENTER|DT_END_ELLIPSIS);
+
+		vr=cell;
+		vr.top=cap.bottom;
+		SelectObject(memdc,valfont);
+		SetTextColor(memdc,(gate>0.5f) ? panelvalcol : RGB(255,90,90));
+		panel_value_string(i,total,buf);
+		DrawText(memdc,buf,-1,&vr,DT_SINGLELINE|DT_CENTER|DT_VCENTER);
+
+		RestoreDC(memdc,saved);
+	}
+
+	SelectObject(memdc,oldpen);
+	DeleteObject(pen);
+
+	BitBlt(hdc,0,0,rc.right,rc.bottom,memdc,0,0,SRCCOPY);
+
+	SelectObject(memdc,oldbmp);
+	DeleteObject(membmp);
+	DeleteDC(memdc);
+
+	EndPaint(displayWnd,&ps);
+}
+
+
+LRESULT CALLBACK BandPanelWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	int t;
+	BANDPOWEROBJ * st;
+
+	st=NULL;
+	for (t=0;(t<GLOBAL.objects)&&(st==NULL);t++)
+		if (objects[t]->type==OB_BANDPOWER)
+		{
+			st=(BANDPOWEROBJ *)objects[t];
+			if (st->displayWnd!=hWnd) st=NULL;
+		}
+
+	if (st==NULL) return DefWindowProc(hWnd,message,wParam,lParam);
+
+	switch( message )
+	{
+		case WM_KEYDOWN:
+			SendMessage(ghWndMain,message,wParam,lParam);
+			break;
+
+		case WM_MOUSEACTIVATE:
+			close_toolbox();
+			actobject=st;
+			SetWindowPos(hWnd,HWND_TOP,0,0,0,0,SWP_DRAWFRAME|SWP_NOMOVE|SWP_NOSIZE);
+			InvalidateRect(ghWndDesign,NULL,TRUE);
+			break;
+
+		case WM_SIZE:
+		case WM_MOVE:
+			{
+				WINDOWPLACEMENT wndpl;
+				GetWindowPlacement(st->displayWnd,&wndpl);
+
+				if (GLOBAL.locksession)
+				{
+					wndpl.rcNormalPosition.top=st->top;
+					wndpl.rcNormalPosition.left=st->left;
+					wndpl.rcNormalPosition.right=st->right;
+					wndpl.rcNormalPosition.bottom=st->bottom;
+					SetWindowPlacement(st->displayWnd,&wndpl);
+					SetWindowLong(st->displayWnd, GWL_STYLE, GetWindowLong(st->displayWnd, GWL_STYLE)&~WS_SIZEBOX);
+				}
+				else
+				{
+					st->top=wndpl.rcNormalPosition.top;
+					st->left=wndpl.rcNormalPosition.left;
+					st->right=wndpl.rcNormalPosition.right;
+					st->bottom=wndpl.rcNormalPosition.bottom;
+					SetWindowLong(st->displayWnd, GWL_STYLE, GetWindowLong(st->displayWnd, GWL_STYLE) | WS_SIZEBOX);
+				}
+				InvalidateRect(hWnd,NULL,TRUE);
+			}
+			break;
+
+		case WM_ERASEBKGND:
+			return 1;
+
+		case WM_PAINT:
+			st->draw_panel();
+			break;
+
+		default:
+			return DefWindowProc(hWnd,message,wParam,lParam);
+	}
+	return 0;
 }
 
 
@@ -577,19 +958,23 @@ void BANDPOWEROBJ::update_dialog_values(float total)
 
 	if (hDlg==NULL) return;
 
+	// ---- the band powers
 	sprintf(tmp,"%.1f",output_value(0,total)); SetDlgItemText(hDlg,IDC_BP_V_DELTA,tmp);
 	sprintf(tmp,"%.1f",output_value(1,total)); SetDlgItemText(hDlg,IDC_BP_V_THETA,tmp);
 	sprintf(tmp,"%.1f",output_value(2,total)); SetDlgItemText(hDlg,IDC_BP_V_ALPHA,tmp);
 	sprintf(tmp,"%.1f",output_value(3,total)); SetDlgItemText(hDlg,IDC_BP_V_BETA,tmp);
-	sprintf(tmp,"%.1f",output_value(4,total)); SetDlgItemText(hDlg,IDC_BP_V_GAMMA,tmp);
-	sprintf(tmp,"%.3f",(avgpow[3]>0.0f) ? (avgpow[1]/avgpow[3]) : 0.0f);
-	SetDlgItemText(hDlg,IDC_BP_V_TBR,tmp);
-	sprintf(tmp,"%.3f",(avgpow[2]>0.0f) ? (avgpow[1]/avgpow[2]) : 0.0f);
-	SetDlgItemText(hDlg,IDC_BP_V_TAR,tmp);
-	sprintf(tmp,"%.3f",((avgpow[2]+avgpow[3])>0.0f)
-		? ((avgpow[0]+avgpow[1])/(avgpow[2]+avgpow[3])) : 0.0f);
-	SetDlgItemText(hDlg,IDC_BP_V_SF,tmp);
-	sprintf(tmp,"%.2f",iaf); SetDlgItemText(hDlg,IDC_BP_V_IAF,tmp);
+	sprintf(tmp,"%.1f",output_value(4,total)); SetDlgItemText(hDlg,IDC_BP_V_HBETA,tmp);
+	sprintf(tmp,"%.1f",output_value(5,total)); SetDlgItemText(hDlg,IDC_BP_V_SMR,tmp);
+	sprintf(tmp,"%.1f",output_value(6,total)); SetDlgItemText(hDlg,IDC_BP_V_BETA2,tmp);
+
+	// ---- the band ratios
+	sprintf(tmp,"%.3f",ratio_value(0)); SetDlgItemText(hDlg,IDC_BP_V_DT,tmp);
+	sprintf(tmp,"%.3f",ratio_value(1)); SetDlgItemText(hDlg,IDC_BP_V_TBR,tmp);
+	sprintf(tmp,"%.3f",ratio_value(2)); SetDlgItemText(hDlg,IDC_BP_V_HBB,tmp);
+	sprintf(tmp,"%.3f",ratio_value(3)); SetDlgItemText(hDlg,IDC_BP_V_TSMR,tmp);
+	sprintf(tmp,"%.3f",ratio_value(4)); SetDlgItemText(hDlg,IDC_BP_V_TB2,tmp);
+	sprintf(tmp,"%.3f",ratio_value(5)); SetDlgItemText(hDlg,IDC_BP_V_TAR,tmp);
+	sprintf(tmp,"%.3f",ratio_value(6)); SetDlgItemText(hDlg,IDC_BP_V_AHB,tmp);
 }
 
 
@@ -597,6 +982,8 @@ LRESULT CALLBACK BandpowerDlgHandler(HWND hDlg, UINT message, WPARAM wParam, LPA
 {
 	BANDPOWEROBJ * st;
 	float total;
+	int t;
+	char tmp[40];
 
 	st = (BANDPOWEROBJ *) actobject;
 	if ((st==NULL)||(st->type!=OB_BANDPOWER)) return(FALSE);
@@ -626,12 +1013,38 @@ LRESULT CALLBACK BandpowerDlgHandler(HWND hDlg, UINT message, WPARAM wParam, LPA
 			bp_setf(hDlg,IDC_BP_THETA_LO,st->band_lo[1]); bp_setf(hDlg,IDC_BP_THETA_HI,st->band_hi[1]);
 			bp_setf(hDlg,IDC_BP_ALPHA_LO,st->band_lo[2]); bp_setf(hDlg,IDC_BP_ALPHA_HI,st->band_hi[2]);
 			bp_setf(hDlg,IDC_BP_BETA_LO, st->band_lo[3]); bp_setf(hDlg,IDC_BP_BETA_HI, st->band_hi[3]);
-			bp_setf(hDlg,IDC_BP_GAMMA_LO,st->band_lo[4]); bp_setf(hDlg,IDC_BP_GAMMA_HI,st->band_hi[4]);
+			bp_setf(hDlg,IDC_BP_HBETA_LO,st->band_lo[4]); bp_setf(hDlg,IDC_BP_HBETA_HI,st->band_hi[4]);
+			bp_setf(hDlg,IDC_BP_SMR_LO,  st->band_lo[5]); bp_setf(hDlg,IDC_BP_SMR_HI,  st->band_hi[5]);
+			bp_setf(hDlg,IDC_BP_BETA2_LO,st->band_lo[6]); bp_setf(hDlg,IDC_BP_BETA2_HI,st->band_hi[6]);
+
+			// the labels carry the greek symbols of the design; the .rc only
+			// holds ASCII placeholders, because it is compiled in the code page
+			// of the build machine
+			for (t=0;t<BP_BANDS;t++)
+			{
+				bp_ansi(bp_cellcaption[t],tmp,40);
+				SetDlgItemText(hDlg,IDC_BP_LB_B0+t,tmp);
+				SetDlgItemText(hDlg,IDC_BP_LB_V0+t,tmp);
+			}
+			for (t=0;t<BP_RATIOS;t++)
+			{
+				bp_ansi(bp_cellcaption[BP_BANDS+t],tmp,40);
+				SetDlgItemText(hDlg,IDC_BP_LB_V7+t,tmp);
+			}
 
 			CheckDlgButton(hDlg,IDC_BP_SELFTEST,st->selftest ? BST_CHECKED : BST_UNCHECKED);
 			CheckDlgButton(hDlg,IDC_BP_LOGVALUES,st->logvalues ? BST_CHECKED : BST_UNCHECKED);
 
-			total=st->avgpow[0]+st->avgpow[1]+st->avgpow[2]+st->avgpow[3]+st->avgpow[4];
+			CheckDlgButton(hDlg,IDC_BP_SHOWPANEL,st->showpanel ? BST_CHECKED : BST_UNCHECKED);
+			CheckDlgButton(hDlg,IDC_BP_SHOWUNITS,st->showunits ? BST_CHECKED : BST_UNCHECKED);
+			bp_seti(hDlg,IDC_BP_COLUMNS,st->columns);
+			bp_seti(hDlg,IDC_BP_PANELSIZE,st->panelsize);
+			color_button(GetDlgItem(hDlg,IDC_BP_VALCOL),st->panelvalcol);
+			color_button(GetDlgItem(hDlg,IDC_BP_BKCOL),st->panelbk);
+			color_button(GetDlgItem(hDlg,IDC_BP_CAPTCOL),st->panelcaptcol);
+
+			total=0.0f;
+			for (t=0;t<BP_BANDS;t++) total+=st->avgpow[t];
 			st->update_dialog_values(total);
 			return TRUE;
 
@@ -702,6 +1115,44 @@ LRESULT CALLBACK BandpowerDlgHandler(HWND hDlg, UINT message, WPARAM wParam, LPA
 					st->logvalues=IsDlgButtonChecked(hDlg,IDC_BP_LOGVALUES);
 					break;
 
+				case IDC_BP_SHOWPANEL:
+					st->showpanel=IsDlgButtonChecked(hDlg,IDC_BP_SHOWPANEL);
+					if (st->displayWnd!=NULL)
+						ShowWindow(st->displayWnd, st->showpanel ? SW_SHOW : SW_HIDE);
+					break;
+				case IDC_BP_COLUMNS:
+					st->columns=bp_geti(hDlg,IDC_BP_COLUMNS,st->columns);
+					if (st->columns<1) st->columns=1;
+					if (st->columns>BP_PANELCELLS) st->columns=BP_PANELCELLS;
+					if (st->displayWnd!=NULL) InvalidateRect(st->displayWnd,NULL,TRUE);
+					break;
+				case IDC_BP_PANELSIZE:
+					st->panelsize=bp_geti(hDlg,IDC_BP_PANELSIZE,st->panelsize);
+					if (st->panelsize<8) st->panelsize=8;
+					if (st->panelsize>200) st->panelsize=200;
+					st->update_panel_fonts();
+					if (st->displayWnd!=NULL) InvalidateRect(st->displayWnd,NULL,TRUE);
+					break;
+				case IDC_BP_SHOWUNITS:
+					st->showunits=IsDlgButtonChecked(hDlg,IDC_BP_SHOWUNITS);
+					if (st->displayWnd!=NULL) InvalidateRect(st->displayWnd,NULL,TRUE);
+					break;
+				case IDC_BP_VALCOL:
+					st->panelvalcol=select_color(hDlg,st->panelvalcol);
+					color_button(GetDlgItem(hDlg,IDC_BP_VALCOL),st->panelvalcol);
+					if (st->displayWnd!=NULL) InvalidateRect(st->displayWnd,NULL,TRUE);
+					break;
+				case IDC_BP_BKCOL:
+					st->panelbk=select_color(hDlg,st->panelbk);
+					color_button(GetDlgItem(hDlg,IDC_BP_BKCOL),st->panelbk);
+					if (st->displayWnd!=NULL) InvalidateRect(st->displayWnd,NULL,TRUE);
+					break;
+				case IDC_BP_CAPTCOL:
+					st->panelcaptcol=select_color(hDlg,st->panelcaptcol);
+					color_button(GetDlgItem(hDlg,IDC_BP_CAPTCOL),st->panelcaptcol);
+					if (st->displayWnd!=NULL) InvalidateRect(st->displayWnd,NULL,TRUE);
+					break;
+
 				case IDC_BP_DELTA_LO: st->band_lo[0]=bp_getf(hDlg,IDC_BP_DELTA_LO,st->band_lo[0]); break;
 				case IDC_BP_DELTA_HI: st->band_hi[0]=bp_getf(hDlg,IDC_BP_DELTA_HI,st->band_hi[0]); break;
 				case IDC_BP_THETA_LO: st->band_lo[1]=bp_getf(hDlg,IDC_BP_THETA_LO,st->band_lo[1]); break;
@@ -710,14 +1161,26 @@ LRESULT CALLBACK BandpowerDlgHandler(HWND hDlg, UINT message, WPARAM wParam, LPA
 				case IDC_BP_ALPHA_HI: st->band_hi[2]=bp_getf(hDlg,IDC_BP_ALPHA_HI,st->band_hi[2]); break;
 				case IDC_BP_BETA_LO:  st->band_lo[3]=bp_getf(hDlg,IDC_BP_BETA_LO, st->band_lo[3]); break;
 				case IDC_BP_BETA_HI:  st->band_hi[3]=bp_getf(hDlg,IDC_BP_BETA_HI, st->band_hi[3]); break;
-				case IDC_BP_GAMMA_LO: st->band_lo[4]=bp_getf(hDlg,IDC_BP_GAMMA_LO,st->band_lo[4]); break;
-				case IDC_BP_GAMMA_HI: st->band_hi[4]=bp_getf(hDlg,IDC_BP_GAMMA_HI,st->band_hi[4]); break;
+				case IDC_BP_HBETA_LO: st->band_lo[4]=bp_getf(hDlg,IDC_BP_HBETA_LO,st->band_lo[4]); break;
+				case IDC_BP_HBETA_HI: st->band_hi[4]=bp_getf(hDlg,IDC_BP_HBETA_HI,st->band_hi[4]); break;
+				case IDC_BP_SMR_LO:   st->band_lo[5]=bp_getf(hDlg,IDC_BP_SMR_LO,  st->band_lo[5]); break;
+				case IDC_BP_SMR_HI:   st->band_hi[5]=bp_getf(hDlg,IDC_BP_SMR_HI,  st->band_hi[5]); break;
+				case IDC_BP_BETA2_LO: st->band_lo[6]=bp_getf(hDlg,IDC_BP_BETA2_LO,st->band_lo[6]); break;
+				case IDC_BP_BETA2_HI: st->band_hi[6]=bp_getf(hDlg,IDC_BP_BETA2_HI,st->band_hi[6]); break;
 			}
+			st->update_outport_ranges();
+			InvalidateRect(ghWndDesign,NULL,TRUE);
 			return TRUE;
 
 		case WM_MOVE:
 		case WM_SIZE:
 			update_toolbox_position(hDlg);
+			break;
+
+		case WM_PAINT:
+			color_button(GetDlgItem(hDlg,IDC_BP_VALCOL),st->panelvalcol);
+			color_button(GetDlgItem(hDlg,IDC_BP_BKCOL),st->panelbk);
+			color_button(GetDlgItem(hDlg,IDC_BP_CAPTCOL),st->panelcaptcol);
 			break;
 	}
 	return FALSE;
