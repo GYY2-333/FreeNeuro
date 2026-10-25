@@ -55,6 +55,8 @@
 #include "ob_neurobit.h"
 #include "ob_bandpower.h"
 #include "ob_artifact.h"
+#include "ob_svserver.h"
+#include "ob_flash.h"
 
 // timer that periodically re-checks that object windows stay inside the
 // canvas area (below the top toolbar, above the status box)
@@ -438,6 +440,10 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 				case IDM_INSERTBANDPOWER:create_object(OB_BANDPOWER);
 					break;
 				case IDM_INSERTARTIFACT:create_object(OB_ARTIFACT);
+					break;
+				case IDM_INSERTSVSERVER:create_object(OB_SVSERVER);
+					break;
+				case IDM_INSERTFLASH:create_object(OB_FLASH);
 					break;
 				case IDM_INSERTTRANSLATE:create_object(OB_TRANSLATE);						
 					break;

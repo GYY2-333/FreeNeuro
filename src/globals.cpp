@@ -100,6 +100,8 @@
 #include "ob_brainflow.h"
 #include "ob_bandpower.h"
 #include "ob_artifact.h"
+#include "ob_svserver.h"
+#include "ob_flash.h"
 #include "ob_medscope.h"
 
 //
@@ -204,6 +206,10 @@ void create_object(int type)
 							 actobject->object_size=sizeof(BANDPOWEROBJ);break;
 		case OB_ARTIFACT:    actobject=new ARTIFACTOBJ(GLOBAL.objects);
 							 actobject->object_size=sizeof(ARTIFACTOBJ);break;
+		case OB_SVSERVER:    actobject=new SV_SERVEROBJ(GLOBAL.objects);
+							 actobject->object_size=sizeof(SV_SERVEROBJ);break;
+		case OB_FLASH:       actobject=new FLASHOBJ(GLOBAL.objects);
+							 actobject->object_size=sizeof(FLASHOBJ);break;
 		case OB_LSL_RECEIVER:actobject=new LSL_RECEIVEOBJ(GLOBAL.objects);             // KDS  240829
 							 actobject->object_size=sizeof(LSL_RECEIVEOBJ);break;							 
 		case OB_DOKU:        actobject=new DOKUOBJ(GLOBAL.objects); 
@@ -528,7 +534,19 @@ void register_classes (HINSTANCE hInstance)
 	wcex.lpfnWndProc = (WNDPROC)MedScopeWndHandler;
 	wcex.lpszClassName    = "MedScopeClass";
 	if (!RegisterClassEx(&wcex))  report_error("Can't register MedScopeWindowclass");
-
+	wcex.cbSize = sizeof(WNDCLASSEX);
+	wcex.style = 0;
+	wcex.cbClsExtra = 0;
+	wcex.cbWndExtra = 0;
+	wcex.hIcon = LoadIcon(hInstance, (LPCTSTR)IDI_MYEEG);
+	wcex.hIconSm          = LoadIcon(hInstance, (LPCTSTR)IDI_SMALL);
+	wcex.hCursor          = LoadCursor(NULL, IDC_ARROW);
+	wcex.hInstance        = hInstance;
+	wcex.hbrBackground    = (HBRUSH) (COLOR_WINDOW + 1);
+	wcex.lpszMenuName     = NULL;
+	wcex.lpfnWndProc = (WNDPROC)FlashWndHandler;
+	wcex.lpszClassName    = "FlashClass";
+	if (!RegisterClassEx(&wcex))  report_error("Can't register FlashWindowclass");
 	wcex.cbSize = sizeof(WNDCLASSEX);
 	wcex.style = 0;//CS_HREDRAW | CS_VREDRAW;
 	wcex.cbClsExtra = 0;
@@ -866,6 +884,7 @@ void GlobalInitialize()
 	GLOBAL.bleReceiver_available = 0;
 	GLOBAL.udpReceiver_available = 0;
 	GLOBAL.brainflow_available = 0;
+	GLOBAL.physioamp_available = 0;
 	GLOBAL.ganglion_bledongle=1;  // BLED112 dongle is default
 	GLOBAL.use_cv_capture=0;
 	strcpy(GLOBAL.emotivpath,"C:\\Program Files (x86)\\Emotiv Development Kit_v1.0.0.3-PREMIUM");

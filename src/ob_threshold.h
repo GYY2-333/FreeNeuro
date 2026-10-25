@@ -65,6 +65,8 @@ class THRESHOLDOBJ : public BASE_CL
 	float numericTrueValue, numericFalseValue;
 	int trueMode;
 	int falseMode;
+	int dragging;          // the level line is being dragged in the meter window
+	int drag_upper;        // 0 = lower_limit, 1 = upper_limit
 
 
     THRESHOLDOBJ(int num);

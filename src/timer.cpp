@@ -25,6 +25,7 @@
 #include "ob_emotiv.h"
 #include "ob_biosemi.h"
 #include "ob_brainflow.h"
+#include "hid_physioamp.h"
 
 
 extern TProtocolEngine NdProtocolEngine;
@@ -132,10 +133,20 @@ void CALLBACK TimerProc(UINT uID,UINT uMsg,DWORD dwUser,DWORD dw1,DWORD dw2)
 				//return;
 			}
 
+			// PhysioAmp: the reader thread only decodes and queues the samples, the
+			// signal chain is run here (one sample per packet time) - the reader
+			// thread must stay free of process_packets(), because that function
+			// sends messages to windows owned by the user interface thread and the
+			// reader would then deadlock DisconnectPhysioAmp() while it waits for it
+			else if (GLOBAL.physioamp_available) {
+				process_physioamp();
+			}
+
 			// process packets in case of no File-Read and no Com-Read
 			else if ((TTY.read_pause) && (!GLOBAL.neurobit_available) && (!GLOBAL.emotiv_available) 
 				      && (!GLOBAL.biosemi_available) && (!GLOBAL.ganglion_available) && (!GLOBAL.brainflow_available) 
-					  && (!GLOBAL.bleReceiver_available) && (!GLOBAL.udpReceiver_available)) {
+					  && (!GLOBAL.bleReceiver_available) && (!GLOBAL.udpReceiver_available)
+					  && (!GLOBAL.physioamp_available)) {
 				process_packets();
 			}
 

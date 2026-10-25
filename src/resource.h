@@ -1112,6 +1112,34 @@
 #define IDC_AR_V_EMG                    1653
 #define IDM_INSERTBANDPOWER             32981
 #define IDM_INSERTARTIFACT              32982
+#define IDM_INSERTSVSERVER              32983
+#define IDM_INSERTFLASH                 32984
+#define IDD_FLASHBOX                    277
+// ---------------------------------------------------------------------------
+//  Flash / SWF object
+// ---------------------------------------------------------------------------
+#define IDC_FL_PATH                     1740
+#define IDC_FL_BROWSE                   1741
+#define IDC_FL_CHANNELS                 1742
+#define IDC_FL_AUTOPLAY                 1743
+#define IDC_FL_LOOP                     1744
+#define IDC_FL_MENU                     1745
+#define IDC_FL_QUALITY                  1746
+#define IDC_FL_SCALEMODE                1747
+#define IDC_FL_RELOAD                   1748
+#define IDC_FL_STATUS                   1749
+#define IDC_FL_VAR1                     1750
+#define IDC_FL_VAR2                     1751
+#define IDC_FL_VAR3                     1752
+#define IDC_FL_VAR4                     1753
+#define IDC_FL_VAR5                     1754
+#define IDC_FL_VAR6                     1755
+#define IDC_FL_VAR7                     1756
+#define IDC_FL_VAR8                     1757
+#define IDC_FL_DRIVE                    1758
+#define IDC_FL_GATEPORT                 1759
+#define IDC_FL_SCOREMS                  1760
+#define IDC_FL_CLOCKMS                  1761
 #define IDC_MED_CHANNELS                1400
 #define IDC_MED_GLOW                    1401
 #define IDC_MED_GAIN                    1402

@@ -111,6 +111,13 @@
 BOOL ConnectPhysioAmp(HWND hDlg);
 BOOL DisconnectPhysioAmp(void);
 
+// The reader thread only queues the decoded samples; they are fed into the object
+// graph by process_physioamp(), which timer.cpp calls while GLOBAL.physioamp_available
+// is set - one sample per packet time, exactly like process_biosemi() and
+// process_brainflow(). Keeping process_packets() off the reader thread is what
+// makes the disconnect work while a session is running.
+void process_physioamp(void);
+
 // Working mode the next ConnectPhysioAmp() asks the device for. The device is
 // read in signal mode only for now, impedance needs the phase analysis first.
 BOOL PhysioAmpSetMode(int mode);        // PA_MODE_SIGNAL / PA_MODE_IMPEDANCE

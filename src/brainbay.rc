@@ -141,6 +141,7 @@ BEGIN
             MENUITEM "EDF-Writer",                  IDM_INSERTEDFWRITER
             MENUITEM "FFT (Spectrum-Analyser)",     IDM_INSERTSPECTRUM
             MENUITEM "File-Writer",                 IDM_INSERTFILE_WRITER
+            MENUITEM "Flash / SWF game",            IDM_INSERTFLASH
             MENUITEM "Oscilloscope",                IDM_INSERTOSCI
             MENUITEM "Medical Signal Scope",        IDM_INSERTMEDSCOPE
             MENUITEM "OSC-Sender",                  IDM_INSERTOSCSENDER
@@ -152,6 +153,7 @@ BEGIN
             MENUITEM "Mouse-Controller",            IDM_INSERTMOUSE
             MENUITEM "Shadow",                      IDM_INSERTSHADOW
             MENUITEM "Sound-Player",                IDM_INSERTWAV
+            MENUITEM "SV-Server (biofeedback games)", IDM_INSERTSVSERVER
             MENUITEM "TCP-Sender",                  IDM_INSERTTCPSENDER
             MENUITEM "Threshold / Meter",           IDM_INSERTTHRESHOLD
             MENUITEM "Volume",                      IDM_INSERTVOLUME
@@ -3052,6 +3054,58 @@ BEGIN
     EDITTEXT        IDC_AR_V_PPAMP,86,154,42,12,ES_READONLY | NOT WS_TABSTOP
     LTEXT           "EMG rms (uV)",IDC_STATIC,138,156,54,8
     EDITTEXT        IDC_AR_V_EMG,196,154,42,12,ES_READONLY | NOT WS_TABSTOP
+END
+
+IDD_FLASHBOX DIALOGEX 0, 0, 356, 300
+STYLE DS_ABSALIGN | DS_SYSMODAL | DS_SETFONT | DS_SETFOREGROUND | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_TOOLWINDOW | WS_EX_STATICEDGE
+CAPTION "Flash / SWF game"
+    FONT 9, "Segoe UI", 0, 0, 0x1
+BEGIN
+    GROUPBOX        "Movie",IDC_STATIC,7,4,342,58
+    LTEXT           "SWF file",IDC_STATIC,14,18,38,8
+    EDITTEXT        IDC_FL_PATH,54,16,262,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "...",IDC_FL_BROWSE,320,16,24,13
+    LTEXT           "Inputs (1-8)",IDC_STATIC,14,38,46,8
+    EDITTEXT        IDC_FL_CHANNELS,62,36,22,12,ES_AUTOHSCROLL | ES_NUMBER
+    CONTROL         "autoplay",IDC_FL_AUTOPLAY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,92,38,54,10
+    CONTROL         "loop",IDC_FL_LOOP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,150,38,38,10
+    CONTROL         "menu",IDC_FL_MENU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,190,38,38,10
+    PUSHBUTTON      "Reload",IDC_FL_RELOAD,270,34,74,16
+    GROUPBOX        "Input variables (ActionScript names)",IDC_STATIC,7,68,342,90
+    LTEXT           "1:",IDC_STATIC,14,84,10,8
+    EDITTEXT        IDC_FL_VAR1,26,82,100,12,ES_AUTOHSCROLL
+    LTEXT           "2:",IDC_STATIC,14,104,10,8
+    EDITTEXT        IDC_FL_VAR2,26,102,100,12,ES_AUTOHSCROLL
+    LTEXT           "3:",IDC_STATIC,14,124,10,8
+    EDITTEXT        IDC_FL_VAR3,26,122,100,12,ES_AUTOHSCROLL
+    LTEXT           "4:",IDC_STATIC,14,144,10,8
+    EDITTEXT        IDC_FL_VAR4,26,142,100,12,ES_AUTOHSCROLL
+    LTEXT           "5:",IDC_STATIC,180,84,10,8
+    EDITTEXT        IDC_FL_VAR5,192,82,100,12,ES_AUTOHSCROLL
+    LTEXT           "6:",IDC_STATIC,180,104,10,8
+    EDITTEXT        IDC_FL_VAR6,192,102,100,12,ES_AUTOHSCROLL
+    LTEXT           "7:",IDC_STATIC,180,124,10,8
+    EDITTEXT        IDC_FL_VAR7,192,122,100,12,ES_AUTOHSCROLL
+    LTEXT           "8:",IDC_STATIC,180,144,10,8
+    EDITTEXT        IDC_FL_VAR8,192,142,100,12,ES_AUTOHSCROLL
+    GROUPBOX        "Quality / scaling",IDC_STATIC,7,164,342,44
+    LTEXT           "Quality",IDC_STATIC,14,180,30,8
+    COMBOBOX        IDC_FL_QUALITY,48,178,70,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Scale mode",IDC_STATIC,130,180,40,8
+    COMBOBOX        IDC_FL_SCALEMODE,174,178,80,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "The port values are written as text into the variables, the movie converts them with Number().",IDC_STATIC,14,194,328,8
+    GROUPBOX        "Status",IDC_STATIC,7,212,342,34
+    LTEXT           "ready",IDC_FL_STATUS,14,224,328,16
+    GROUPBOX        "NeuroFlasher game drive",IDC_STATIC,7,250,342,44
+    CONTROL         "score + clock (In1 = score, In2 = keep alive)",IDC_FL_DRIVE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,14,262,200,10
+    LTEXT           "gate port",IDC_STATIC,222,262,34,8
+    EDITTEXT        IDC_FL_GATEPORT,258,260,22,12,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "ms / point",IDC_STATIC,14,280,38,8
+    EDITTEXT        IDC_FL_SCOREMS,54,278,34,12,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "ms / tick",IDC_STATIC,100,280,34,8
+    EDITTEXT        IDC_FL_CLOCKMS,136,278,34,12,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "the movie only advances when a value changes - the score grows while the gate is open, the clock always runs",IDC_STATIC,180,280,162,16
 END
 
 

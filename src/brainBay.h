@@ -149,8 +149,10 @@ extern "C" {
 #define OB_MEDSCOPE     74
 #define OB_BANDPOWER    75
 #define OB_ARTIFACT     76
+#define OB_SVSERVER     77
+#define OB_FLASH        78
 
-#define OBJECT_COUNT 	77
+#define OBJECT_COUNT 	79
 
 
 
@@ -169,7 +171,8 @@ extern "C" {
 				 "VECTOR_FLOAT", "DISPLAY_VECTOR", "VECTORBUFFER", "GANGLION", \
 				 "SESSIONTIME", "SESSIONMANAGER", "KEYCAPTURE", "BUTTON", "EVALUATOR EXPR-TK", \
 				 "SHADOW", "VOLUME", "OSC-SENDER", "BIOSEMI", "BRAINFLOW", "LSL", "UDP_RECEIVE", "BLE_RECEIVE", \
-				 "MEDSCOPE", "BAND-POWER", "ARTIFACT"
+				 "MEDSCOPE", "BAND-POWER", "ARTIFACT", \
+				 "SV-SERVER", "FLASH"
 
 //
 // use the main menu handler in brainbay.cpp 
@@ -384,6 +387,7 @@ typedef struct GLOBALStruct
 	int bleReceiver_available;
 	int udpReceiver_available;
 	int brainflow_available;
+	int physioamp_available;		// drained by process_physioamp() from timer.cpp
 
 	int ganglion_bledongle;
 

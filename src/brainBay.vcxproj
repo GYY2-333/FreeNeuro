@@ -90,7 +90,7 @@
       <WarningLevel>Level1</WarningLevel>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <AdditionalIncludeDirectories>..\lib\BioSemi\release;..\lib;..\lib\ComputerVision\opencv\include;..\lib\ComputerVision;..\lib\neurobit_api;..\lib\BioSemi\DLL\Win64;..\lib\BioSemi;..\lib\Brainflow\inc</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCToolsInstallDir)atlmfc\include;..\lib\BioSemi\release;..\lib;..\lib\ComputerVision\opencv\include;..\lib\ComputerVision;..\lib\neurobit_api;..\lib\BioSemi\DLL\Win64;..\lib\BioSemi;..\lib\Brainflow\inc</AdditionalIncludeDirectories>
       <AdditionalOptions>/bigobj /std:c++17 /await %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
@@ -101,7 +101,7 @@
       <AdditionalDependencies>Brainflow32.lib;MLModule32.lib;DataHandler32.lib;BoardController32.lib;odbc32.lib;odbccp32.lib;comctl32.lib;winmm.lib;opengl32.lib;glu32.lib;SDL.lib;SDL_net.lib;SDL_sound.lib;modplug.lib;vfw32.lib;glaux.lib;skinstyle.lib;ole32.lib;strmiids.lib;uuid.lib;msimg32.lib;lsl.lib;setupapi.lib;hid.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>..\bin\brainBay.exe</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalLibraryDirectories>..\lib\liblsl;..\lib\libmsvc;..\lib\ComputerVision\opencv\lib;..\lib\ComputerVision\videoInput\lib;..\lib\Brainflow\libd;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>..\lib\liblsl;..\lib\libmsvc;..\lib\ComputerVision\opencv\lib;..\lib\ComputerVision\videoInput\lib;..\lib\Brainflow\libd;$(VCToolsInstallDir)atlmfc\lib\x86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>libcd.lib;libc.lib;%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>.\Debug/brainBay.pdb</ProgramDatabaseFile>
@@ -194,7 +194,7 @@
       <ProgramDataBaseFileName>.\Release/</ProgramDataBaseFileName>
       <WarningLevel>Level1</WarningLevel>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalIncludeDirectories>..\lib;..\lib\ComputerVision;..\lib\ComputerVision\opencv\include;..\lib\neurobit_api;..\lib\Brainflow\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCToolsInstallDir)atlmfc\include;..\lib;..\lib\ComputerVision;..\lib\ComputerVision\opencv\include;..\lib\neurobit_api;..\lib\Brainflow\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/bigobj /std:c++17 /await %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
@@ -212,7 +212,7 @@
       </DataExecutionPrevention>
       <TargetMachine>MachineX86</TargetMachine>
       <AdditionalDependencies>Brainflow32.lib;MLModule32.lib;DataHandler32.lib;BoardController32.lib;odbc32.lib;odbccp32.lib;comctl32.lib;winmm.lib;opengl32.lib;glu32.lib;SDL.lib;SDL_net.lib;matheval.lib;SDL_sound.lib;modplug.lib;vfw32.lib;glaux.lib;skinstyle.lib;ole32.lib;strmiids.lib;uuid.lib;Msimg32.lib;lsl.lib;setupapi.lib;hid.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\lib\libmsvc;..\lib\ComputerVision\videoInput\lib;..\lib\ComputerVision\opencv\lib;..\lib\Brainflow\lib;..\lib\liblsl;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>..\lib\libmsvc;..\lib\ComputerVision\videoInput\lib;..\lib\ComputerVision\opencv\lib;..\lib\Brainflow\lib;..\lib\liblsl;$(VCToolsInstallDir)atlmfc\lib\x86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>libc.lib;libcd.lib;LIBCMTD.lib</IgnoreSpecificDefaultLibraries>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
     </Link>
@@ -288,6 +288,8 @@
     <ClCompile Include="ob_medscope.cpp" />
     <ClCompile Include="ob_bandpower.cpp" />
     <ClCompile Include="ob_artifact.cpp" />
+    <ClCompile Include="ob_svserver.cpp" />
+    <ClCompile Include="ob_flash.cpp" />
     <ClCompile Include="darkmode.cpp" />
     <ClCompile Include="ob_and.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
@@ -820,6 +822,9 @@
     <ClInclude Include="ob_medscope.h" />
     <ClInclude Include="ob_bandpower.h" />
     <ClInclude Include="ob_artifact.h" />
+    <ClInclude Include="ob_svserver.h" />
+    <ClInclude Include="ob_flash.h" />
+    <ClInclude Include="sv_proto.h" />
     <ClInclude Include="darkmode.h" />
     <ClInclude Include="highgui.h" />
     <ClInclude Include="matheval.h" />

@@ -24,10 +24,23 @@
   Each 64 byte data frame carries 30 little-endian ADC codes plus a four byte
   header (frame number, type id, tick counter). In signal mode the six protocol
   channels are just consecutive slices of one single ADC time series, so the 30
-  samples are re-ordered into a single channel time series: for every sample we
-  store it in PACKET.buffer[0] and call process_packets(), which drives the EEG
-  object's work() function - identical in spirit to how the NIA / Ganglion sources
-  feed the signal processing chain.
+  samples are re-ordered into a single channel time series.
+
+  The reader thread only decodes the frames and queues the samples - it never
+  calls process_packets() itself. process_packets() runs the work() functions of
+  the whole object graph, and a lot of those update windows that belong to the
+  user interface thread (update_statusinfo() alone calls SetDlgItemText() for
+  every packet it reports). A message sent to a window of another thread is only
+  delivered while that thread pumps messages, so the reader thread blocked inside
+  SendMessage whenever the user interface thread was not pumping. Disconnecting
+  does exactly that - it waits for the reader thread - so the two waits deadlocked
+  each other until the wait timed out and the reader "could not be stopped".
+
+  The samples are therefore handed over in a small ring: timer.cpp calls
+  process_physioamp() on its timer thread while GLOBAL.physioamp_available is set,
+  one sample per packet time. That is the same arrangement process_biosemi() and
+  process_brainflow() use - only those two pull the data from the device, this one
+  is pushed to, which is why a bounded queue is needed in between.
 
   The device powers up in signal mode; 0xF8 toggles between signal and impedance
   mode and is answered by nothing at all. ConnectPhysioAmp() therefore asks the
@@ -67,6 +80,21 @@ extern "C" {
 // how long to wait for the reader thread to finish when disconnecting
 #define PA_THREAD_EXIT_MS       5000
 
+// Ring the reader thread fills and the timer thread drains. Power of two so the
+// indices can be masked; 8192 samples are ~2.7 s at 3000 samples/sec, far more
+// than the timer thread ever lags behind.
+#define PA_QUEUE_LEN            8192
+
+// When more than this many samples are waiting, the graph is really stalled (a
+// modal dialog, a paused session, a design that cannot keep up). The value has to
+// be well above one timer tick: TimerProc() is a timeSetEvent(1, ...) callback and
+// the project never calls timeBeginPeriod(), so a callback can be 15.6 ms away -
+// that is ~47 samples at 3000 Hz, which is completely normal jitter, not a stall.
+#define PA_QUEUE_RESYNC         1500    // ~0.5 s at 3000 samples/sec
+
+// upper bound of samples fed into the graph by one process_physioamp() call
+#define PA_DRAIN_MAX            256
+
 // --- module state ------------------------------------------------------------
 static HANDLE  hPhysioAmp        = INVALID_HANDLE_VALUE;
 static HANDLE  hReaderThread     = NULL;
@@ -89,6 +117,14 @@ static int  streamingMode = PA_MODE_SIGNAL;  // mode the reader decodes
 
 static unsigned int oldTick = PA_FRAME_TICK_NONE;   // lost frame detection
 
+// sample queue: the reader thread is the only producer, the timer thread the only
+// consumer, so a head/tail pair without a lock is enough (both are 32 bit, the
+// unsigned difference stays correct across a wrap)
+static unsigned short paQueue[PA_QUEUE_LEN];
+static volatile LONG   paQueueHead = 0;    // written by the reader thread
+static volatile LONG   paQueueTail = 0;    // written by the timer thread
+static BOOL            paQueueWarned = FALSE;   // overflow already reported
+
 
 /* The handshake request is a full 64 byte Output Report rather than a bare
    command byte: byte 0 carries 0x80, the remaining bytes are the parameter block
@@ -104,6 +140,127 @@ static const unsigned char paHandshakeRequest[PA_REPORT_LEN] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
+
+
+/*----------------------------------------------------------------------------
+  sample queue
+----------------------------------------------------------------------------*/
+static void pa_queue_push(unsigned short sample)
+{
+	LONG head = paQueueHead;
+
+	if ((ULONG)(head - paQueueTail) >= PA_QUEUE_LEN)
+	{
+		// consumer a whole queue behind: the object graph cannot process what the
+		// device delivers. process_physioamp() skips such a backlog anyway, this
+		// only bounds the loss when the consumer stopped completely.
+		if (!paQueueWarned)
+		{
+			paQueueWarned = TRUE;
+			write_logfile("PhysioAmp: sample queue overflow, the object graph cannot keep up");
+		}
+		GLOBAL.syncloss++;
+		return;
+	}
+
+	paQueue[head & (PA_QUEUE_LEN - 1)] = sample;
+	paQueueHead = head + 1;
+}
+
+
+static BOOL pa_queue_pop(unsigned short *sample)
+{
+	LONG tail = paQueueTail;
+
+	if (tail == paQueueHead) return FALSE;                    // empty
+
+	*sample = paQueue[tail & (PA_QUEUE_LEN - 1)];
+	paQueueTail = tail + 1;
+	return TRUE;
+}
+
+
+static void pa_queue_clear(void)
+{
+	paQueueTail = paQueueHead;
+}
+
+
+/*----------------------------------------------------------------------------
+  process_physioamp:  feed one queued sample into the object graph.
+
+  Called by timer.cpp on the timer thread while GLOBAL.physioamp_available is set,
+  once per packet time - the sample rate therefore matches the device rate without
+  the reader thread having to touch the graph (which is what used to deadlock the
+  disconnect). Nothing here talks to the device, so a running session can never
+  block DisconnectPhysioAmp().
+----------------------------------------------------------------------------*/
+void process_physioamp(void)
+{
+	unsigned short sample;
+	int fed = 0;
+
+	// raw statistics, logged once per second: tells a flat device output apart
+	// from "no data at all" - the band powers alone cannot distinguish them
+	static unsigned int  statMin   = 0xFFFF;
+	static unsigned int  statMax   = 0;
+	static unsigned long long statSum = 0;
+	static unsigned int  statCount = 0;
+
+	// not streaming: whatever the device sent in the meantime is dropped, which
+	// is what the reader thread used to do on its own inside parse_frame()
+	if (TTY.read_pause || GLOBAL.loading)
+	{
+		pa_queue_clear();
+		return;
+	}
+
+	// a real stall: skip the stale backlog and continue with the newest sample,
+	// otherwise the session would replay old data forever
+	if ((ULONG)(paQueueHead - paQueueTail) > PA_QUEUE_RESYNC)
+	{
+		int dropped = (int)((ULONG)(paQueueHead - paQueueTail) - 1);
+
+		GLOBAL.syncloss += dropped;
+		paQueueTail = paQueueHead - 1;
+
+		if (!paQueueWarned)
+		{
+			paQueueWarned = TRUE;
+			write_logfile("PhysioAmp: sample queue resync, %d samples dropped"
+			              " (the design cannot keep up with the sample rate)", dropped);
+		}
+	}
+
+	/* Feed everything that arrived since the last call. Draining a single sample
+	   per call looked correct (one sample per packet time) but the timer callback
+	   only runs every ~15.6 ms, i.e. ~47 samples later - the old code then threw
+	   away all but one of them on every callback, which decimated the signal and
+	   made every downstream measurement (band power, artifact/quality) useless. */
+	while (pa_queue_pop(&sample))
+	{
+		if (sample < statMin) statMin = sample;
+		if (sample > statMax) statMax = sample;
+		statSum += sample;
+		statCount++;
+
+		PACKET.buffer[0] = sample;
+		process_packets();          // drives the EEG object's work()
+
+		if (++fed >= PA_DRAIN_MAX) break;
+	}
+
+	if (statCount >= 3000)
+	{
+		write_logfile("PhysioAmp raw: min=%u max=%u mean=%.1f spread=%u n=%u",
+		              statMin, statMax, (double) statSum / (double) statCount,
+		              statMax - statMin, statCount);
+		statMin   = 0xFFFF;
+		statMax   = 0;
+		statSum   = 0;
+		statCount = 0;
+	}
+}
 
 
 /*----------------------------------------------------------------------------
@@ -161,7 +318,7 @@ static int wait_for_io(OVERLAPPED *ol, HANDLE completion, DWORD timeoutMs, DWORD
 
   Returns FALSE when the reader thread is still alive after the timeout. In that
   case both handles are deliberately kept: releasing them while the thread still
-  runs is exactly what would let a stale reader touch the object graph later.
+  runs is exactly what would let a stale reader touch freed memory later.
 ----------------------------------------------------------------------------*/
 static BOOL close_device(void)
 {
@@ -186,6 +343,11 @@ static BOOL close_device(void)
 		CloseHandle(hPhysioAmp);
 		hPhysioAmp = INVALID_HANDLE_VALUE;
 	}
+
+	// the device is gone, so timer.cpp must stop draining - and it must not find
+	// samples of a connection that has just ended either
+	pa_queue_clear();
+	GLOBAL.physioamp_available = 0;
 
 	actualMode = -1;
 	oldTick    = PA_FRAME_TICK_NONE;
@@ -482,14 +644,14 @@ static void parse_frame(const unsigned char *payload)
 
 	if (TTY.read_pause || GLOBAL.loading) return;
 
+	// nothing is fed into the object graph from here any more (timer.cpp does
+	// that), so the reader only has to decode and queue the frames
 	for (int s = 0; s < PA_SAMPLES_PER_FRAME; s++)
 	{
 		int off = PA_DATA_OFFSET + s * 2;
-		unsigned int sample = (unsigned int) payload[off] |
-		                      ((unsigned int) payload[off + 1] << 8);
 
-		PACKET.buffer[0] = sample;
-		process_packets();          // drives the EEG object's work()
+		pa_queue_push((unsigned short) ((unsigned int) payload[off] |
+		                                ((unsigned int) payload[off + 1] << 8)));
 	}
 }
 
@@ -498,7 +660,10 @@ static void parse_frame(const unsigned char *payload)
   PhysioAmpReadThread:  reader loop.
 
   The read is waited for together with the stop event, so DisconnectPhysioAmp()
-  can always bring this loop to an end - even while a read is pending.
+  can always bring this loop to an end - even while a read is pending. The stop
+  flag is also tested before every transfer, because a device that streams
+  without a gap makes ReadFile() complete immediately, in which case the stop
+  event is never one of the objects waited for below.
 ----------------------------------------------------------------------------*/
 static DWORD WINAPI PhysioAmpReadThread(LPVOID lpv)
 {
@@ -512,9 +677,13 @@ static DWORD WINAPI PhysioAmpReadThread(LPVOID lpv)
 	}
 
 	const DWORD frameLen = (DWORD)(reportIdBytes + PA_DATA_OFFSET + PA_SAMPLES_PER_FRAME * 2);
+	int readErrors = 0;
 
 	for (;;)
 	{
+		if (hStopEvent != NULL && WaitForSingleObject(hStopEvent, 0) == WAIT_OBJECT_0)
+			break;                                  // stop requested
+
 		ZeroMemory(&readOverlapped, sizeof(readOverlapped));
 		readOverlapped.hEvent = hReadEvent;
 		ResetEvent(hReadEvent);
@@ -529,12 +698,36 @@ static DWORD WINAPI PhysioAmpReadThread(LPVOID lpv)
 		else
 			state = -1;
 
-		if (state == 0) break;                          // stop requested
+		if (state == 0)
+		{
+			// the read is still pending here: cancel and reap it, the buffer must
+			// not go away while the class driver still owns the transfer
+			CancelIoEx(hPhysioAmp, &readOverlapped);
+			GetOverlappedResult(hPhysioAmp, &readOverlapped, &read, TRUE);
+			break;                                  // stop requested
+		}
 		if (state < 0)
 		{
-			write_logfile("PhysioAmp: ReadFile failed, closing reader");
-			break;
+			DWORD err = GetLastError();
+
+			// a single failed read used to kill the whole stream - retry a few
+			// times, the device recovers from short hiccups
+			readErrors++;
+			if (readErrors == 1)
+				write_logfile("PhysioAmp: read error %lu, retrying", err);
+
+			if (err == ERROR_DEVICE_NOT_CONNECTED || err == ERROR_NO_SUCH_DEVICE ||
+			    err == ERROR_ACCESS_DENIED || readErrors > 50)
+			{
+				write_logfile("PhysioAmp: read failed permanently (error %lu after %d tries), closing reader",
+				              err, readErrors);
+				break;
+			}
+
+			Sleep(20);
+			continue;
 		}
+		readErrors = 0;
 
 		if (read >= frameLen) parse_frame(buf + reportIdBytes);
 	}
@@ -565,8 +758,8 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 		return TRUE;
 	}
 
-	// a reader that never finished would keep touching the object graph, so make
-	// sure it is really gone before the device is opened again
+	// a reader that never finished would keep the device handle and the reader
+	// buffer busy, so make sure it is really gone before the device is opened again
 	if (hReaderThread != NULL && !close_device())
 	{
 		write_logfile("PhysioAmp: previous reader thread still running, not connecting");
@@ -661,9 +854,16 @@ BOOL ConnectPhysioAmp(HWND hDlg)
 	actualMode    = mode;
 	streamingMode = mode;
 	oldTick       = PA_FRAME_TICK_NONE;
+
+	// a fresh connection starts with an empty queue, and timer.cpp may only
+	// drain it from here on
+	pa_queue_clear();
+	GLOBAL.physioamp_available = 1;
+
 	hReaderThread = CreateThread(NULL, 0, PhysioAmpReadThread, NULL, 0, NULL);
 	if (hReaderThread == NULL)
 	{
+		GLOBAL.physioamp_available = 0;
 		write_logfile("PhysioAmp: could not create reader thread");
 		close_device();
 		TTY.read_pause = sav_pause;

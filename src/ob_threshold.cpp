@@ -422,12 +422,49 @@ LRESULT CALLBACK ThresholdDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LP
 }
 
 
+// the meter window draws the threshold levels as horizontal lines - these two
+// helpers convert between a y-position in the window and the signal value, so
+// the level can be dragged with the mouse while the session is running
+static int threshold_meter_bottom(THRESHOLDOBJ *st)
+{
+	RECT rect;
+
+	GetClientRect(st->displayWnd, &rect);
+	return rect.bottom - 15;
+}
+
+static int threshold_meter_height(THRESHOLDOBJ *st)
+{
+	RECT rect;
+	int  bottom;
+
+	GetClientRect(st->displayWnd, &rect);
+	bottom = rect.bottom - 15;
+
+	if (bottom - rect.top - 20 < 1) return 1;
+	return bottom - rect.top - 20;
+}
+
+static float threshold_meter_value(THRESHOLDOBJ *st, int y)
+{
+	return size_value(0.0f, (float) threshold_meter_height(st),
+	                  (float) (threshold_meter_bottom(st) - y),
+	                  st->in_ports[0].in_min, st->in_ports[0].in_max, 0);
+}
+
+static int threshold_meter_pos(THRESHOLDOBJ *st, float value)
+{
+	return threshold_meter_bottom(st) -
+	       (int) size_value(st->in_ports[0].in_min, st->in_ports[0].in_max,
+	                        value, 0.0f, (float) threshold_meter_height(st), 0);
+}
+
+
 LRESULT CALLBACK MeterWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {   
 	int t;
 	THRESHOLDOBJ * st;
 	
-
 	st=NULL;
 	for (t=0;(t<GLOBAL.objects)&&(st==NULL);t++)
 		if (objects[t]->type==OB_THRESHOLD)
@@ -464,6 +501,73 @@ LRESULT CALLBACK MeterWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 		  actobject=st;
 		  SetWindowPos(hWnd,HWND_TOP,0,0,0,0,SWP_DRAWFRAME|SWP_NOMOVE|SWP_NOSIZE);
 		  InvalidateRect(ghWndDesign,NULL,TRUE);
+			break;
+
+		case WM_LBUTTONDOWN:
+			{
+				int y  = (int)(short) HIWORD(lParam);
+				int y1 = threshold_meter_pos(st, (float) st->lower_limit);
+				int y2 = threshold_meter_pos(st, (float) st->upper_limit);
+
+				// grab the level line the user clicked on (tolerance 15 pixels)
+				if (abs(y - y1) <= 15)      st->drag_upper = 0;
+				else if (abs(y - y2) <= 15) st->drag_upper = 1;
+				else break;                 // click was not on a line
+
+				st->dragging = 1;
+				SetCapture(hWnd);
+				SendMessage(hWnd, WM_MOUSEMOVE, wParam, lParam);
+			}
+			break;
+
+		case WM_MOUSEMOVE:
+			if (st->dragging)
+			{
+				char temp[20];
+				float v = threshold_meter_value(st, (int)(short) HIWORD(lParam));
+
+				if (st->drag_upper) st->upper_limit = v;
+				else                st->lower_limit = v;
+
+				// keep the toolbox in sync, setting the text also stores the limit
+				if ((st->hDlg != NULL) && IsWindow(st->hDlg))
+				{
+					sprintf(temp, "%.2f", st->drag_upper ? st->upper_limit : st->lower_limit);
+					SetDlgItemText(st->hDlg, st->drag_upper ? IDC_AVGTO : IDC_AVGFROM, temp);
+				}
+
+				st->last_value = INVALID_VALUE;
+				st->redraw     = 1;
+				InvalidateRect(st->displayWnd, NULL, TRUE);
+			}
+			break;
+
+		case WM_LBUTTONUP:
+			if (st->dragging)
+			{
+				st->dragging = 0;
+				ReleaseCapture();
+			}
+			break;
+
+		case WM_SETCURSOR:
+			if (LOWORD(lParam) == HTCLIENT)
+			{
+				POINT p;
+				int   y, y1, y2;
+
+				GetCursorPos(&p);
+				ScreenToClient(hWnd, &p);
+				y  = p.y;
+				y1 = threshold_meter_pos(st, (float) st->lower_limit);
+				y2 = threshold_meter_pos(st, (float) st->upper_limit);
+
+				if ((abs(y - y1) <= 15) || (abs(y - y2) <= 15))
+				{
+					SetCursor(LoadCursor(NULL, IDC_SIZENS));
+					return TRUE;
+				}
+			}
 			break;
 		case WM_SIZE: 
 		case WM_MOVE:
@@ -532,6 +636,8 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 		numericFalseValue=0;
 		trueMode=0;
 		falseMode=0;
+		dragging=0;
+		drag_upper=0;
 
 		last_value=0;
 		for (accupos=0;accupos<ACCULEN;accupos++) accu[accupos]=0; 
