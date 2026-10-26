@@ -640,7 +640,7 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 		drag_upper=0;
 
 		last_value=0;
-		for (accupos=0;accupos<ACCULEN;accupos++) accu[accupos]=0; 
+		for (accupos=0;accupos<THRESHOLD_ACCULEN;accupos++) accu[accupos]=0; 
 		accupos=0;redraw=1;firstadapt=1;
 		interval_len=1; op=TRUE;
 		threshold_avg_sum=0;baseline=0;
@@ -690,6 +690,8 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 		load_object_basics(this);
 		load_property("play_interval",P_INT,&play_interval);
 		load_property("interval_len",P_INT,&interval_len);
+		if (interval_len < 1) interval_len = 1;
+		if (interval_len > THRESHOLD_ACCULEN - 1) interval_len = THRESHOLD_ACCULEN - 1;
 		load_property("gain",P_INT,&signal_gain);
 		load_property("from-input",P_FLOAT,&lower_limit);
 		load_property("to-input",P_FLOAT,&upper_limit);
@@ -838,6 +840,8 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 	    float gain_value=(float)((input)*signal_gain/100.0);
 
 		// signal preparation: averaging
+		if (interval_len < 1) interval_len = 1;
+		if (interval_len > THRESHOLD_ACCULEN - 1) interval_len = THRESHOLD_ACCULEN - 1;
 		accupos++;
 		if (accupos>=interval_len) accupos=0; 
 		interval_sum-=accu[accupos];
@@ -967,7 +971,7 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
       }
       void THRESHOLDOBJ::clear_averagers()
       {
-			for (int i=0;i<1000;i++) accu[i]=0;
+			for (int i=0;i<THRESHOLD_ACCULEN;i++) accu[i]=0;
 			accupos=0;
 			threshold_avg_sum=0;
 			interval_sum=0;

@@ -195,6 +195,34 @@ static BOOL flash_invoke(IDispatch *disp, const OLECHAR *name, VARIANT *args, UI
 }
 
 
+// read a numeric property of the control (ReadyState, TotalFrames, ...)
+static BOOL flash_get_long(IDispatch *disp, const OLECHAR *name, long *out)
+{
+	DISPID      id;
+	DISPPARAMS  dp;
+	VARIANT     result;
+	HRESULT     hr;
+
+	if (out) *out = -1;
+	if (disp == NULL) return FALSE;
+	if (!flash_disp_id(disp, name, &id)) return FALSE;
+
+	memset(&dp, 0, sizeof(dp));
+	VariantInit(&result);
+	hr = disp->Invoke(id, IID_NULL, LOCALE_USER_DEFAULT,
+	                  DISPATCH_PROPERTYGET, &dp, &result, NULL, NULL);
+	if (SUCCEEDED(hr) && out)
+	{
+		if (result.vt == VT_I4)     *out = result.lVal;
+		else if (result.vt == VT_I2) *out = result.iVal;
+		else if (result.vt == VT_R8) *out = (long) result.dblVal;
+	}
+	VariantClear(&result);
+
+	return SUCCEEDED(hr);
+}
+
+
 // SetVariable("name", "value") - the actual data path into the movie
 static BOOL flash_set_variable(IDispatch *disp, const char *name, float value)
 {
@@ -476,6 +504,18 @@ static void flash_push_values(FLASHOBJ *st)
 
 		st->var_ok     = 1;
 		st->sent_count++;
+
+		// a few samples of the load state: TotalFrames == 0 means the movie did
+		// not really render (wrong loader build, game swf missing, ...)
+		if (st->sent_count == 2 || st->sent_count == 100 || st->sent_count == 400)
+		{
+			long ready = -1, frames = -1, pct = -1;
+			flash_get_long((IDispatch *) st->ax_ctrl, L"ReadyState",    &ready);
+			flash_get_long((IDispatch *) st->ax_ctrl, L"PercentLoaded", &pct);
+			flash_get_long((IDispatch *) st->ax_ctrl, L"TotalFrames",   &frames);
+			write_logfile("Flash: ReadyState=%ld PercentLoaded=%ld TotalFrames=%ld",
+			              ready, pct, frames);
+		}
 	}
 }
 

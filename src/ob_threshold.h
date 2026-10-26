@@ -16,7 +16,11 @@
 
 #include "brainBay.h"
 
-#define ACCULEN 1000
+// moving-average window of the threshold object, in samples. 9000 covers 3 s at
+// the 3000 Hz of the PhysioAmp, which is what the BioExplorer designs use for
+// their 'AveragePeriod' (1 s for attention/distraction, 2 s for tension).
+// (named THRESHOLD_ACCULEN because ob_sessionmanager.h already uses ACCULEN)
+#define THRESHOLD_ACCULEN 9000
 
 #define THRESHOLD_ADAPTMODE_NONE 0
 #define THRESHOLD_ADAPTMODE_RANGE 1
@@ -35,7 +39,7 @@ class THRESHOLDOBJ : public BASE_CL
 	float current_value;
 	float last_risingTest;
 	int  last_value;
-	float accu[ACCULEN];
+	float accu[THRESHOLD_ACCULEN];
 	int  accupos;
 	int buckets[1025];
     int adapt_num;
