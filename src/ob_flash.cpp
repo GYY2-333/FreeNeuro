@@ -516,6 +516,25 @@ static void flash_push_values(FLASHOBJ *st)
 			write_logfile("Flash: ReadyState=%ld PercentLoaded=%ld TotalFrames=%ld",
 			              ready, pct, frames);
 		}
+
+		// once per second: what the movie really receives. A score that never
+		// grows means the training gate stayed closed, a clock that stands still
+		// means the push loop is not running.
+		if (st->drive)
+		{
+			static DWORD lastlog = 0;
+			DWORD t = GetTickCount();
+
+			if ((t - lastlog) >= 1000)
+			{
+				lastlog = t;
+				write_logfile("Flash: %s=%.0f %s=%.0f gate=%.3f(%s)",
+				              st->scorevar, st->score,
+				              st->clockvar, st->heartbeat,
+				              (double) st->last_value[st->gateport],
+				              flash_gate_open(st) ? "open" : "closed");
+			}
+		}
 	}
 }
 

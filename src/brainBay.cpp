@@ -810,6 +810,15 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 			 // top toolbar and the bottom status box)
 			 if (wParam != SIZE_MINIMIZED)
 				 update_canvas_window();
+			 // tile the object displays once the window has reached its final size
+			 // (SIZE_RESTORED also fires continuously while a border is dragged,
+			 //  so that case is handled in WM_EXITSIZEMOVE instead)
+			 if (wParam == SIZE_MAXIMIZED)
+				 tile_display_windows();
+			break;
+		case WM_EXITSIZEMOVE:
+			// the user finished dragging/resizing: refill the canvas
+			tile_display_windows();
 			break;
     	case WM_MOVE:
 			{
@@ -832,6 +841,7 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 			// Resize Design canvas (and a full screen Sessionmanager) between
 			// the top toolbar and the bottom status box
 			update_canvas_window();
+			tile_display_windows();
 			InvalidateRect(ghWndDesign, NULL, TRUE);
 		}
 		break;

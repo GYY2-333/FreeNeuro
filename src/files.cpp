@@ -668,6 +668,13 @@ BOOL load_configfile(LPCTSTR pszFileName)
 		 // ignoring the (possibly windowed) geometry stored in the config.
 		 ShowWindow( ghWndMain, SW_SHOWMAXIMIZED );
 		 UpdateWindow( ghWndMain );
+		 // The config may carry a small design geometry (design-top/left/right/
+		 // bottom) - restore the full screen canvas. This cannot be left to the
+		 // WM_SIZE handler because a window that is already maximized never sends
+		 // another WM_SIZE, which left the canvas at the stored size.
+		 update_canvas_window();
+		 // fill the canvas with the object displays, like the BioExplorer design view
+		 tile_display_windows();
 		 // SetWindowPos(ghWndMain,0,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE);
 		 InvalidateRect(ghWndMain,NULL,TRUE);
  		 InvalidateRect(ghWndDesign,NULL,TRUE);

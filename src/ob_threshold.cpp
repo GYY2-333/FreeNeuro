@@ -24,122 +24,205 @@
 #include "ob_threshold.h"
 #include <wingdi.h> 
  
+// ---------------------------------------------------------------------------
+//  meter window: dark feedback board
+//
+//  header band  - object name on the left, current value on the right
+//  background   - flat dark board with a horizontal grid and a scale
+//  bar          - one coloured bar per criterion, dimmed while failing
+//  peak line    - follows the maximum and decays (like BioExplorer DecayTime)
+//  thresholds   - dashed amber lines with their numeric value on the right
+// ---------------------------------------------------------------------------
+
+#define METER_HEAD_H      22          // header band height in pixels
+#define METER_GRIDSTEP    4           // number of horizontal grid divisions
+#define METER_GRIDCOL     RGB( 38, 38, 46)
+#define METER_DIMCOL      RGB(118,124,138)
+#define METER_LINECOL     RGB(255,150, 60)
+#define METER_PEAKCOL     RGB(236,240,250)
+
+static COLORREF meter_dim(COLORREF c, float f)
+{
+	return RGB((int)(GetRValue(c)*f), (int)(GetGValue(c)*f), (int)(GetBValue(c)*f));
+}
+
+
 void draw_meter(THRESHOLDOBJ * st)
 {
 	PAINTSTRUCT ps;
-	HDC hdc;
-	char szdata[20];
-	RECT rect;
-	int  act,width,mid,height,bottom,y1,y2;
-	HBRUSH actbrush,bkbrush;
-	HPEN bkpen;
-	float min, max;
+	HDC hdc,memdc;
+	HBITMAP membmp,oldbmp;
+	RECT rect,tb,r;
+	HBRUSH br,oldbr;
+	HPEN pen,oldpen;
+	char szdata[48];
+	int  width,mid,bottom,top,height,act,peaky,y1,y2,i,pass;
+	float min,max;
+	DWORD now;
 
-	
-	GetClientRect(st->displayWnd, &rect);
-	//width=rect.right>>1;
-	width=(int)((float)rect.right/200.0f*st->barsize);
-	mid=rect.right>>1;
-    	
+	if (st->displayWnd==NULL) return;
+	GetClientRect(st->displayWnd,&rect);
+	if ((rect.right<8)||(rect.bottom<8)) return;
+
+	hdc=BeginPaint(st->displayWnd,&ps);
+	memdc=CreateCompatibleDC(hdc);
+	membmp=CreateCompatibleBitmap(hdc,rect.right,rect.bottom);
+	oldbmp=(HBITMAP)SelectObject(memdc,membmp);
+
+	// ---- background ---------------------------------------------------
+	br=CreateSolidBrush(st->bkcolor);
+	FillRect(memdc,&rect,br);
+	DeleteObject(br);
+
+	// ---- header band --------------------------------------------------
+	tb=rect;
+	tb.bottom=tb.top+METER_HEAD_H;
+	if (tb.bottom>rect.bottom) tb.bottom=rect.bottom;
+	br=CreateSolidBrush(st->fontbkcolor);
+	FillRect(memdc,&tb,br);
+	DeleteObject(br);
+
 	min=st->in_ports[0].in_min;
 	max=st->in_ports[0].in_max;
+	if (max<=min) max=min+1.0f;
 
-	hdc = BeginPaint (st->displayWnd, &ps);
-	bottom=rect.bottom-15;
-	height=(bottom-rect.top-20);
+	top=tb.bottom+6;
+	bottom=rect.bottom-4;
+	if (bottom-top<12) { top=tb.bottom; bottom=rect.bottom; }
+	height=bottom-top;
+	if (height<1) height=1;
 
-    act=bottom-(int)(size_value(min,max,st->current_value,0.0f,(float)height,0));
-	y1 =bottom-(int)(size_value(min,max,(float)st->lower_limit,0.0f,(float)height,0));
-	y2 =bottom-(int)(size_value(min,max,(float)st->upper_limit,0.0f,(float)height,0));
+	width=(int)((float)rect.right/200.0f*st->barsize);
+	if (width<4) width=4;
+	if (width>rect.right/2-6) width=rect.right/2-6;
+	mid=rect.right>>1;
 
+	act=bottom-(int)(size_value(min,max,st->current_value,0.0f,(float)height,0));
 	if (act>bottom) act=bottom;
-	if (act<bottom-height) act=bottom-height;
+	if (act<top)    act=top;
 
-	actbrush=CreateSolidBrush(st->color);
-    bkbrush=CreateSolidBrush(st->bkcolor);
-	bkpen =CreatePen (PS_SOLID,1,st->bkcolor);
-	if (st->redraw) FillRect(hdc, &rect,bkbrush);
-    
-   	SelectObject (hdc, bkpen);		
-   	SelectObject (hdc, bkbrush);
-	if (st->adapt_lower_limit)
+	y1=bottom-(int)(size_value(min,max,(float)st->lower_limit,0.0f,(float)height,0));
+	y2=bottom-(int)(size_value(min,max,(float)st->upper_limit,0.0f,(float)height,0));
+
+	// ---- is the criterion met? ---------------------------------------
+	pass=((st->current_value>=(float)st->lower_limit)&&
+	      (st->current_value<=(float)st->upper_limit)) ? 1 : 0;
+	if (!st->op) pass=!pass;
+
+	// ---- peak hold with decay ----------------------------------------
+	now=GetTickCount();
+	if (st->current_value>=st->peak)
 	{
-		Rectangle(hdc,15,st->old_y1,50,st->old_y1+15);
-		MoveToEx(hdc,5, st->old_y1,NULL);	
-		LineTo(hdc,rect.right, st->old_y1);
+		st->peak=st->current_value;
+		st->peaktick=now;
+	}
+	else if (st->decayms>0)
+	{
+		DWORD dt=now-st->peaktick;
+		if (dt>0)
+		{
+			st->peak-=(max-min)*(float)dt/(float)st->decayms;
+			st->peaktick=now;
+			if (st->peak<st->current_value) st->peak=st->current_value;
+		}
+	}
+	peaky=bottom-(int)(size_value(min,max,st->peak,0.0f,(float)height,0));
+	if (peaky<top)    peaky=top;
+	if (peaky>bottom) peaky=bottom;
+
+	// ---- grid ---------------------------------------------------------
+	pen=CreatePen(PS_SOLID,1,METER_GRIDCOL);
+	oldpen=(HPEN)SelectObject(memdc,pen);
+	for (i=1;i<METER_GRIDSTEP;i++)
+	{
+		int y=bottom-(int)((float)height*(float)i/METER_GRIDSTEP);
+		MoveToEx(memdc,4,y,NULL);
+		LineTo(memdc,rect.right-4,y);
+	}
+	SelectObject(memdc,oldpen);
+	DeleteObject(pen);
+
+	// ---- bar ----------------------------------------------------------
+	br=CreateSolidBrush(pass ? st->color : meter_dim(st->color,0.40f));
+	pen=CreatePen(PS_SOLID,1,pass ? meter_dim(st->color,0.70f)
+	                              : meter_dim(st->color,0.28f));
+	oldpen=(HPEN)SelectObject(memdc,pen);
+	oldbr =(HBRUSH)SelectObject(memdc,br);
+	Rectangle(memdc,mid-width,act,mid+width,bottom);
+	SelectObject(memdc,oldbr);
+	SelectObject(memdc,oldpen);
+	DeleteObject(pen);
+	DeleteObject(br);
+
+	// ---- peak hold line -----------------------------------------------
+	pen=CreatePen(PS_SOLID,2,pass ? METER_PEAKCOL : METER_DIMCOL);
+	oldpen=(HPEN)SelectObject(memdc,pen);
+	MoveToEx(memdc,mid-width-2,peaky,NULL);
+	LineTo(memdc,mid+width+2,peaky);
+	SelectObject(memdc,oldpen);
+	DeleteObject(pen);
+
+	// ---- threshold lines (dashed) -------------------------------------
+	pen=CreatePen(PS_DASH,1,METER_LINECOL);
+	oldpen=(HPEN)SelectObject(memdc,pen);
+	MoveToEx(memdc,2,y1,NULL);
+	LineTo(memdc,rect.right-2,y1);
+	MoveToEx(memdc,2,y2,NULL);
+	LineTo(memdc,rect.right-2,y2);
+	SelectObject(memdc,oldpen);
+	DeleteObject(pen);
+
+	// ---- text ---------------------------------------------------------
+	if ((st->fontsize>0) && (st->font!=NULL))
+	{
+		SelectObject(memdc,st->font);
+		SetBkMode(memdc,TRANSPARENT);
+
+		// header: name on the left, value + unit on the right
+		SetTextColor(memdc,st->fontcolor);
+		r=tb; r.left+=8; r.right-=8;
+		DrawText(memdc,st->wndcaption,-1,&r,
+		         DT_SINGLELINE|DT_LEFT|DT_VCENTER|DT_END_ELLIPSIS);
+
+		sprintf(szdata,"%.2f %s",st->current_value,st->in_ports[0].in_dim);
+		SetTextColor(memdc,pass ? meter_dim(st->color,1.35f) : METER_DIMCOL);
+		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
+
+		// scale labels on the left edge
+		SetTextColor(memdc,METER_DIMCOL);
+		for (i=0;i<=METER_GRIDSTEP;i++)
+		{
+			float v=min+(max-min)*(float)i/METER_GRIDSTEP;
+			int   y=bottom-(int)((float)height*(float)i/METER_GRIDSTEP);
+
+			sprintf(szdata,"%.0f",v);
+			r.left=2; r.right=40;
+			r.top=y-7; r.bottom=y+7;
+			DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
+		}
+
+		// threshold values on the right edge
+		SetTextColor(memdc,METER_LINECOL);
+		sprintf(szdata,"%.1f",st->lower_limit);
+		r.left=rect.right-46; r.right=rect.right-3;
+		r.top=y1-7; r.bottom=y1+7;
+		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
+		sprintf(szdata,"%.1f",st->upper_limit);
+		r.top=y2-7; r.bottom=y2+7;
+		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
 	}
 
-	if (st->adapt_upper_limit)
-	{
-		Rectangle(hdc,15,st->old_y2,50,st->old_y2+15);
-		MoveToEx(hdc,5, st->old_y2,NULL);	
-		LineTo(hdc,rect.right, st->old_y2);
-	}
+	BitBlt(hdc,0,0,rect.right,rect.bottom,memdc,0,0,SRCCOPY);
 
-	if ((st->last_value<act)&&(!st->redraw)) 
-	{
-			SelectObject (hdc, bkbrush);		
-			Rectangle(hdc,mid-width,st->last_value,mid+width,act);
-	}
-	else
-	{
-			SelectObject (hdc, actbrush);
-			Rectangle(hdc,mid-width,bottom,mid+width,act);
-	}
+	SelectObject(memdc,oldbmp);
+	DeleteObject(membmp);
+	DeleteDC(memdc);
 
-	if ((st->fontsize>0))
-	{
-		RECT txtpos;int x;
-		SelectObject(hdc, st->font);
-		SetBkMode(hdc, OPAQUE);
-		SetBkColor(hdc, st->fontbkcolor);
-		SetTextColor(hdc,st->fontcolor);
-
-		//wsprintf(szdata, "%d   ",(int)(st->current_value+0.5f));
-		//ExtTextOut( hdc, rect.right-40,10, 0, &rect,szdata, strlen(szdata), NULL ) ;
-
-		txtpos.left=5;txtpos.right=50;
-		txtpos.top=0;txtpos.bottom=0;
-		if ((st->baseline) && (st->firstadapt)) 
-			sprintf(szdata, "  ");
-		else sprintf(szdata, " %.2f ",st->lower_limit);
-		DrawText(hdc, szdata, -1, &txtpos, DT_CALCRECT);
-		x=txtpos.bottom;
-		txtpos.top=y1-x;txtpos.bottom=txtpos.top+x;
-		DrawText(hdc, szdata, -1, &txtpos, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-	
-
-		txtpos.left=5;txtpos.right=50;
-		txtpos.top=0;txtpos.bottom=0;
-		if ((st->baseline) && (st->firstadapt)) 
-			sprintf(szdata, " get baseline ");
-		else sprintf(szdata, " %.2f ",st->upper_limit);
-		DrawText(hdc, szdata, -1, &txtpos, DT_CALCRECT);
-//		txtpos.top=y2+1;txtpos.bottom+=y2+1;
-
-		x=txtpos.bottom;
-		txtpos.top=y2-x;txtpos.bottom=txtpos.top+x;
-
-
-		DrawText(hdc, szdata, -1, &txtpos, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-		
-	}
-	
-	SelectObject (hdc, DRAW.pen_ltblue);		
-	MoveToEx(hdc,5, y1,NULL);	
-	LineTo(hdc,rect.right, y1);
 	st->old_y1=y1;
-
-	MoveToEx(hdc,5, y2,NULL);	
-	LineTo(hdc,rect.right, y2);
 	st->old_y2=y2;
-
-	DeleteObject(actbrush);
-	DeleteObject(bkbrush);
-	DeleteObject(bkpen);
 	st->last_value=act;
 	st->redraw=0;
-	EndPaint( st->displayWnd, &ps );
+	EndPaint(st->displayWnd,&ps);
 }
 
 
@@ -650,7 +733,16 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 		input=0;current_value=0;
 		fontsize=10; barsize=30;
 		left=510;right=550;top=20;bottom=400;
-		color=RGB(0,0,100);bkcolor=RGB(255,255,255);fontcolor=0;fontbkcolor=RGB(255,255,255);
+
+		// dark feedback board look (BioExplorer style)
+		color=RGB( 70,170,255);				// accent colour of the bar
+		bkcolor=RGB( 16, 16, 20);			// board background
+		fontcolor=RGB(190,196,210);			// text
+		fontbkcolor=RGB( 26, 26, 34);		// header band
+		peak=0.0f;
+		peaktick=0;
+		decayms=3000;						// peak hold falls over the full range in 3 s
+
         
         clear_averagers();
 
@@ -747,7 +839,7 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 					report_error("Font creation failed!");
 		}
 		load_property("barsize",P_INT,&barsize);
-		load_property("wndcaption",P_STRING,wndcaption);
+		load_property("decayms",P_INT,&decayms);
 
 		int tmp;
 		load_property("trueMode",P_INT,&trueMode);
@@ -811,6 +903,7 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 		save_property(hFile,"adapt_upper_mode",P_INT,&adapt_upper_mode);
 		save_property(hFile,"adaptinterval",P_INT,&adapt_interval);
 		save_property(hFile,"barsize",P_INT,&barsize);
+		save_property(hFile,"decayms",P_INT,&decayms);
 		save_property(hFile,"fontsize",P_INT,&fontsize);
 		save_property(hFile,"wndcaption",P_STRING,wndcaption);
 

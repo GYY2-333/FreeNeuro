@@ -76,6 +76,12 @@ static void bp_unit_range(OUTPORTStruct *p, int units)
 		p->out_min=0.0f;
 		p->out_max=100.0f;
 	}
+	else if (units==3)                                  // RMS amplitude
+	{
+		strcpy(p->out_dim,"uV");
+		p->out_min=0.0f;
+		p->out_max=100.0f;
+	}
 	else                                                // uV^2
 	{
 		strcpy(p->out_dim,"uV^2");
@@ -244,6 +250,9 @@ BANDPOWEROBJ::BANDPOWEROBJ(int num) : BASE_CL()
 	strcpy(wndcaption,"Band-Power");
 	showpanel=1;
 	columns=2;                              // 7 rows x 2 columns, like the protocol
+	panelfirst=0;							// this panel shows all cells by default
+	panelcells=BP_PANELCELLS;
+	highlight=0;							// no cell marked as "in use" by default
 	panelsize=24;
 	panelrows=BP_PANELCELLS/2;
 	showunits=1;
@@ -386,6 +395,11 @@ float BANDPOWEROBJ::output_value(int band, float total)
 		if (total<1.0e-6f) return(0.0f);
 		return((float)(100.0*(double)avgpow[band]/(double)total));
 	}
+	if (units==3)                                      // RMS amplitude in uV
+	{
+		if (avgpow[band]<=0.0f) return(0.0f);
+		return((float)sqrt((double)avgpow[band]));
+	}
 	return(avgpow[band]);
 }
 
@@ -438,6 +452,9 @@ void BANDPOWEROBJ::load(HANDLE hFile)
 	load_property("bp_panelcaption",P_STRING,wndcaption);
 	load_property("bp_showpanel",P_INT,&showpanel);
 	load_property("bp_columns",P_INT,&columns);
+	load_property("bp_first",P_INT,&panelfirst);
+	load_property("bp_cells",P_INT,&panelcells);
+	load_property("bp_hl",P_INT,&highlight);
 	load_property("bp_panelsize",P_INT,&panelsize);
 	load_property("bp_showunits",P_INT,&showunits);
 	load_property("bp_valcol",P_INT,&panelvalcol);
@@ -494,6 +511,9 @@ void BANDPOWEROBJ::save(HANDLE hFile)
 	save_property(hFile,"bp_panelcaption",P_STRING,wndcaption);
 	save_property(hFile,"bp_showpanel",P_INT,&showpanel);
 	save_property(hFile,"bp_columns",P_INT,&columns);
+	save_property(hFile,"bp_first",P_INT,&panelfirst);
+	save_property(hFile,"bp_cells",P_INT,&panelcells);
+	save_property(hFile,"bp_hl",P_INT,&highlight);
 	save_property(hFile,"bp_panelsize",P_INT,&panelsize);
 	save_property(hFile,"bp_showunits",P_INT,&showunits);
 	save_property(hFile,"bp_valcol",P_INT,&panelvalcol);
@@ -701,7 +721,7 @@ const char *BANDPOWEROBJ::panel_caption(int cell)
 	if (cell>=BP_PANELCELLS) cell=BP_PANELCELLS-1;
 
 	if (cell<7)                                         // band powers
-		unit=(units==1) ? "dB" : ((units==2) ? "%" : "uV^2");
+		unit=(units==1) ? "dB" : ((units==2) ? "%" : ((units==3) ? "uV" : "uV^2"));
 	else                                                // band ratios
 		unit="ratio";
 
@@ -750,7 +770,8 @@ void BANDPOWEROBJ::draw_panel(void)
 	HPEN pen,oldpen;
 	char buf[40];
 	int i,col,row,cw,ch,saved;
-	float total;
+	int first,ncells,k;
+	float total,bandmax;
 
 	if (displayWnd==NULL) return;
 
@@ -769,7 +790,15 @@ void BANDPOWEROBJ::draw_panel(void)
 
 	if (columns<1) columns=1;
 	if (columns>BP_PANELCELLS) columns=BP_PANELCELLS;
-	panelrows=(BP_PANELCELLS+columns-1)/columns;
+
+	// only draw the cells of this panel (allows splitting the 14 cells into two
+	// windows, e.g. the 7 bands on the left and the 7 ratios on the right)
+	first=panelfirst; ncells=panelcells;
+	if ((first<0) || (first>BP_PANELCELLS-1)) first=0;
+	if ((ncells<1) || (first+ncells>BP_PANELCELLS)) { first=0; ncells=BP_PANELCELLS; }
+
+	panelrows=(ncells+columns-1)/columns;
+	if (panelrows<1) panelrows=1;
 
 	cw=rc.right/columns;   if (cw<1) cw=1;
 	ch=rc.bottom/panelrows; if (ch<1) ch=1;
@@ -778,13 +807,23 @@ void BANDPOWEROBJ::draw_panel(void)
 
 	SetBkMode(memdc,TRANSPARENT);
 
+	// largest band of this frame: the level bars are scaled to it so that even
+	// small amplitudes stay visible
+	bandmax=0.0f;
+	for (i=0;i<BP_BANDS;i++)
+	{
+		float v=output_value(i,total);
+		if (v>bandmax) bandmax=v;
+	}
+
 	pen=CreatePen(PS_SOLID,1,RGB(70,70,82));
 	oldpen=(HPEN)SelectObject(memdc,pen);
 
-	for (i=0;i<BP_PANELCELLS;i++)
+	for (k=0;k<ncells;k++)
 	{
-		col=i%columns;
-		row=i/columns;
+		i=first+k;
+		col=k%columns;
+		row=k/columns;
 
 		cell.left=rc.left+col*cw;
 		cell.top=rc.top+row*ch;
@@ -795,6 +834,58 @@ void BANDPOWEROBJ::draw_panel(void)
 		LineTo(memdc,cell.right-1,cell.bottom-1);
 		MoveToEx(memdc,cell.right-1,cell.top,NULL);
 		LineTo(memdc,cell.right-1,cell.bottom-1);
+
+		// ---- level bar at the bottom of the cell ----------------------
+		{
+			int   bh, by, bwmax, bw;
+			float fv, fmax, frac;
+			HBRUSH bb;
+			RECT brc;
+
+			bh = ch/8; if (bh<3) bh=3; if (bh>8) bh=8;
+			by = cell.bottom-2-bh;
+			bwmax = cell.right-cell.left-10;
+			if (bwmax<4) bwmax=4;
+
+			if (i<BP_BANDS) { fv=output_value(i,total); fmax=bandmax; }
+			else            { fv=ratio_value(i-BP_BANDS); fmax=BP_RATIO_MAX; }
+
+			frac = (fmax>1.0e-6f) ? (fv/fmax) : 0.0f;
+			if (frac<0.0f) frac=0.0f;
+			if (frac>1.0f) frac=1.0f;
+			bw = (int)((float)bwmax*frac);
+			if (bw<1) bw=1;
+
+			brc.left   = cell.left+5;
+			brc.right  = brc.left+bwmax;
+			brc.top    = by;
+			brc.bottom = by+bh;
+
+			bb=CreateSolidBrush(RGB(30,32,40));
+			FillRect(memdc,&brc,bb);
+			DeleteObject(bb);
+
+			brc.right = brc.left+bw;
+			bb=CreateSolidBrush((highlight & (1<<i)) ? RGB(120,220,255)
+			                                         : panelvalcol);
+			FillRect(memdc,&brc,bb);
+			DeleteObject(bb);
+		}
+
+		// ---- mark the cells that drive the training criteria ----------
+		if (highlight & (1<<i))
+		{
+			HPEN hp=CreatePen(PS_SOLID,1,RGB(80,190,245));
+			HPEN op=(HPEN)SelectObject(memdc,hp);
+			HBRUSH nb=(HBRUSH)GetStockObject(NULL_BRUSH);
+			HBRUSH ob=(HBRUSH)SelectObject(memdc,nb);
+
+			Rectangle(memdc,cell.left+1,cell.top+1,cell.right-2,cell.bottom-2);
+
+			SelectObject(memdc,ob);
+			SelectObject(memdc,op);
+			DeleteObject(hp);
+		}
 
 		cap=cell;
 		cap.left+=6;
@@ -1001,6 +1092,7 @@ LRESULT CALLBACK BandpowerDlgHandler(HWND hDlg, UINT message, WPARAM wParam, LPA
 			SendMessage(GetDlgItem(hDlg,IDC_BP_UNITS),CB_ADDSTRING,0,(LPARAM)(LPSTR)"uV^2");
 			SendMessage(GetDlgItem(hDlg,IDC_BP_UNITS),CB_ADDSTRING,0,(LPARAM)(LPSTR)"dB");
 			SendMessage(GetDlgItem(hDlg,IDC_BP_UNITS),CB_ADDSTRING,0,(LPARAM)(LPSTR)"relative %");
+			SendMessage(GetDlgItem(hDlg,IDC_BP_UNITS),CB_ADDSTRING,0,(LPARAM)(LPSTR)"uV (amplitude)");
 			SendMessage(GetDlgItem(hDlg,IDC_BP_UNITS),CB_SETCURSEL,st->units,0);
 
 			bp_seti(hDlg,IDC_BP_HOPMS,st->hop_ms);

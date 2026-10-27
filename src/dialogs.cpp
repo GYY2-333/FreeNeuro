@@ -2314,6 +2314,13 @@ void update_canvas_window(void)
 	SetWindowPos(ghWndDesign, NULL, 0, topH,
 		fullW, designH, SWP_NOZORDER|SWP_NOACTIVATE);
 
+	// keep the stored geometry in sync, so "save design" writes the real canvas
+	// rectangle instead of whatever the loaded file contained
+	GLOBAL.design_left   = 0;
+	GLOBAL.design_top    = topH;
+	GLOBAL.design_right  = fullW;
+	GLOBAL.design_bottom = topH + designH;
+
 	for (i=0;i<GLOBAL.objects;i++)
 	{
 		if ((objects[i]!=NULL)&&(objects[i]->displayWnd!=NULL)&&
@@ -2332,6 +2339,225 @@ void update_canvas_window(void)
 	}
 
 	sweep_canvas_windows();
+}
+
+
+//-----------------------------------------------------------------------
+//  tile_display_windows
+//  Arranges the object display windows the way the BioExplorer design view
+//  does: a gap free grid that fills the whole canvas. The canvas rectangle
+//  is divided recursively (slice and dice); the share of every pane follows
+//  the weight of the object type, so the game window and the band power
+//  panel stay large while the meters get narrow columns.
+//-----------------------------------------------------------------------
+typedef struct tagTILEWIN
+{
+	HWND hWnd;
+	int  weight;
+} TILEWIN;
+
+#define TILE_MAXWIN 64
+#define TILE_MINPANEL 60
+
+static int tile_weight(int type)
+{
+	switch (type)
+	{
+		case OB_FLASH:           return 4;
+		case OB_BANDPOWER:       return 3;
+		case OB_OSCI:
+		case OB_MARTINI:
+		case OB_BALLGAME:        return 2;
+		case OB_SESSIONMANAGER:  return 0;      // handled by update_canvas_window
+		default:                 return 1;
+	}
+}
+
+
+static void tile_slice(TILEWIN *w, int count, int x, int y, int cx, int cy)
+{
+	int i, total = 0, acc = 0, split = 1, w1 = 0, a;
+
+	if (count <= 0) return;
+
+	if (count == 1)
+	{
+		SetWindowPos(w[0].hWnd, NULL, x, y, cx, cy, SWP_NOZORDER|SWP_NOACTIVATE);
+		return;
+	}
+
+	for (i = 0; i < count; i++) total += w[i].weight;
+	if (total <= 0) total = count;
+
+	for (i = 0; i < count - 1; i++)
+	{
+		acc += w[i].weight;
+		split = i + 1;
+		if (acc * 2 >= total) break;
+	}
+	if (split < 1) split = count - 1;
+	if (split > count - 1) split = count - 1;
+
+	for (i = 0; i < split; i++) w1 += w[i].weight;
+	if (w1 <= 0) w1 = split;
+
+	if (cx >= cy)                                   // side by side
+	{
+		a = (int) ((double) cx * (double) w1 / (double) total);
+		if ((a < TILE_MINPANEL) || ((cx - a) < TILE_MINPANEL)) a = cx / 2;
+		tile_slice(w, split, x, y, a, cy);
+		tile_slice(w + split, count - split, x + a, y, cx - a, cy);
+	}
+	else                                            // stacked
+	{
+		a = (int) ((double) cy * (double) w1 / (double) total);
+		if ((a < TILE_MINPANEL) || ((cy - a) < TILE_MINPANEL)) a = cy / 2;
+		tile_slice(w, split, x, y, cx, a);
+		tile_slice(w + split, count - split, x, y + a, cx, cy - a);
+	}
+}
+
+
+void tile_display_windows(void)
+{
+	TILEWIN wings[2];
+	TILEWIN meters[TILE_MAXWIN];
+	TILEWIN rest[TILE_MAXWIN];
+	int  nw = 0, nm = 0, nr = 0, i, j;
+	RECT rc;
+	int  W, H, wingW, midX, midW, topH;
+
+	if ((ghWndMain == NULL) || (ghWndDesign == NULL)) return;
+
+	GetWindowRect(ghWndDesign, &rc);
+	MapWindowPoints(NULL, ghWndMain, (LPPOINT) &rc, 2);
+	W = rc.right - rc.left;
+	H = rc.bottom - rc.top;
+	if ((W < 80) || (H < 80)) return;
+
+	for (i = 0; i < GLOBAL.objects; i++)
+	{
+		HWND h;
+		int  type, weight;
+
+		if (objects[i] == NULL) continue;
+		h = objects[i]->displayWnd;
+		if (h == NULL) continue;
+		if (GetParent(h) != ghWndMain) continue;
+		if (!IsWindowVisible(h)) continue;
+
+		type   = objects[i]->type;
+		weight = tile_weight(type);
+		if (weight <= 0) continue;
+
+		if ((type == OB_BANDPOWER) && (nw < 2))
+		{
+			// up to two band-power panels become the left and the right wing
+			wings[nw].hWnd = h;
+			wings[nw].weight = weight;
+			nw++;
+		}
+		else if ((type == OB_THRESHOLD) && (nm < TILE_MAXWIN))
+		{
+			// the threshold meters share one row on top of the middle column
+			meters[nm].hWnd = h;
+			meters[nm].weight = 1;
+			nm++;
+		}
+		else if (nr < TILE_MAXWIN)
+		{
+			rest[nr].hWnd = h;
+			rest[nr].weight = weight;
+			nr++;
+		}
+	}
+
+	if ((nw == 0) && (nm == 0) && (nr == 0)) return;
+
+	// ---------------------------------------------------------------------
+	//  no band power panel: keep the generic gap free grid
+	// ---------------------------------------------------------------------
+	if (nw == 0)
+	{
+		for (i = 0; i < nm; i++) rest[nr++] = meters[i];
+
+		for (i = 1; i < nr; i++)
+		{
+			TILEWIN t = rest[i];
+			for (j = i; (j > 0) && (rest[j-1].weight < t.weight); j--) rest[j] = rest[j-1];
+			rest[j] = t;
+		}
+
+		tile_slice(rest, nr, rc.left, rc.top, W, H);
+
+		for (i = 0; i < nr; i++)
+		{
+			SendMessage(rest[i].hWnd, WM_MOVE, 0, 0);
+			InvalidateRect(rest[i].hWnd, NULL, TRUE);
+		}
+		return;
+	}
+
+	// ---------------------------------------------------------------------
+	//  wings layout:
+	//     [ band power ][ threshold | threshold | threshold ][ band power ]
+	//     [            ][              game                 ][            ]
+	// ---------------------------------------------------------------------
+	wingW = W / 5;                                  // 20 % per wing
+	if (wingW < 120) wingW = 120;
+	if (wingW > W / 3) wingW = W / 3;
+	if (((nw == 2) ? (2 * wingW) : wingW) > (W - 200))
+		wingW = (W - 200) / ((nw == 2) ? 2 : 1);
+	if (wingW < 60) wingW = 60;
+
+	SetWindowPos(wings[0].hWnd, NULL, rc.left, rc.top, wingW, H,
+	             SWP_NOZORDER|SWP_NOACTIVATE);
+	midX = rc.left + wingW;
+
+	if (nw > 1)
+	{
+		SetWindowPos(wings[1].hWnd, NULL, rc.right - wingW, rc.top, wingW, H,
+		             SWP_NOZORDER|SWP_NOACTIVATE);
+	}
+	midW = W - nw * wingW;
+	if (midW < 60) midW = 60;
+
+	topH = 0;
+	if (nm > 0)
+	{
+		topH = (H * 22) / 100;
+		if (topH < 90) topH = 90;
+		if (topH > H / 2) topH = H / 2;
+
+		for (i = 0; i < nm; i++)
+		{
+			int x0 = midX + (midW * i) / nm;
+			int x1 = midX + (midW * (i + 1)) / nm;
+
+			SetWindowPos(meters[i].hWnd, NULL, x0, rc.top, x1 - x0, topH,
+			             SWP_NOZORDER|SWP_NOACTIVATE);
+		}
+	}
+
+	if (nr > 0)
+		tile_slice(rest, nr, midX, rc.top + topH, midW, H - topH);
+
+	// the windows were moved behind the back of their owners - repaint them
+	for (i = 0; i < nw; i++)
+	{
+		SendMessage(wings[i].hWnd, WM_MOVE, 0, 0);
+		InvalidateRect(wings[i].hWnd, NULL, TRUE);
+	}
+	for (i = 0; i < nm; i++)
+	{
+		SendMessage(meters[i].hWnd, WM_MOVE, 0, 0);
+		InvalidateRect(meters[i].hWnd, NULL, TRUE);
+	}
+	for (i = 0; i < nr; i++)
+	{
+		SendMessage(rest[i].hWnd, WM_MOVE, 0, 0);
+		InvalidateRect(rest[i].hWnd, NULL, TRUE);
+	}
 }
 
 

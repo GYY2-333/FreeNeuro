@@ -51,6 +51,9 @@ class THRESHOLDOBJ : public BASE_CL
 	float threshold_avg_sum;
 	float interval_sum;
 	float range_min,range_max;
+	float peak;					// peak hold level of the bar
+	DWORD peaktick;				// GetTickCount() when the peak was last updated
+	int   decayms;				// ms the peak needs to fall over the full range
 	int  op;
 	int  showmeter;
 	int  rising,falling;

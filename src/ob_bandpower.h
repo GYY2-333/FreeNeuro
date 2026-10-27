@@ -96,7 +96,10 @@ class BANDPOWEROBJ : public BASE_CL
 	char	wndcaption[50];
 	int		showpanel;				// show the panel window
 	int		columns;				// panel cells per row (1 .. 4)
+	int		panelfirst;			// index of the first cell shown by this panel
+	int		panelcells;			// number of cells shown (1 .. BP_PANELCELLS)
 	int		panelsize;				// font size of the big numbers (points)
+	int		highlight;			// bit mask: cells 0..13 drawn as "in use"
 	int		panelrows;				// derived from columns
 	int		showunits;				// append the unit to the cell caption
 	COLORREF panelbk;				// panel background colour

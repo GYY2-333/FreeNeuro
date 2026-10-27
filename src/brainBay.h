@@ -700,6 +700,7 @@ int		canvas_bottom(void);
 void	clamp_canvas_rect(RECT * r);
 void	install_canvas_clamp(HWND hWnd);
 void	sweep_canvas_windows(void);
+void	tile_display_windows(void);
 void	keep_popup_below_toolbar(int * x, int * y, int w, int h);
 
 
