@@ -139,7 +139,21 @@ void display_toolbox(HWND hDlg)
 			
 void close_toolbox( void )
 {
-	if (ghWndToolbox!=NULL) SendMessage(ghWndToolbox,WM_CLOSE,0,0);
+	if (ghWndToolbox!=NULL)
+	{
+		SendMessage(ghWndToolbox,WM_CLOSE,0,0);
+
+		// last resort: an object settings dialog refuses every message once
+		// actobject no longer points at its object. The dark-mode subclass
+		// already closes it in that case, but make really sure the window is
+		// gone - otherwise the handle would be lost and the dialog would stay
+		// on screen forever.
+		if (IsWindow(ghWndToolbox))
+		{
+			write_logfile("toolbox: dialog did not close, destroying it");
+			DestroyWindow(ghWndToolbox);
+		}
+	}
 	ghWndToolbox=NULL;	actobject=NULL; actconnect=NULL; GLOBAL.showtoolbox=-1;
 	InvalidateRect(ghWndDesign,NULL,TRUE);
 }

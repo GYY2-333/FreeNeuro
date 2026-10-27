@@ -685,9 +685,11 @@ LRESULT CALLBACK MainWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 						hFile = CreateFile(tmpfile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
 						if(hFile != INVALID_HANDLE_VALUE)
 						{
-							actobject=NULL;
-							int newobj=load_next_config_buffer(hFile);
+							// close the settings dialog FIRST: close_toolbox() clears
+							// actobject, and an already cleared actobject makes the open
+							// dialog ignore its own WM_CLOSE (it would never close)
 							close_toolbox();
+							int newobj=load_next_config_buffer(hFile);
 							create_object(newobj);
 							if (actobject != NULL )  {
 								SCROLLINFO si;

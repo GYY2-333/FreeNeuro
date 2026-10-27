@@ -36,10 +36,13 @@
 
 #define METER_HEAD_H      22          // header band height in pixels
 #define METER_GRIDSTEP    4           // number of horizontal grid divisions
-#define METER_GRIDCOL     RGB( 38, 38, 46)
-#define METER_DIMCOL      RGB(118,124,138)
-#define METER_LINECOL     RGB(255,150, 60)
-#define METER_PEAKCOL     RGB(236,240,250)
+#define METER_FRAMECOL    RGB(158,160,175)   // light frame around the panel
+#define METER_PLOTCOL     RGB( 42, 12, 42)   // deep purple plot area
+#define METER_PLOTEDGE    RGB(102, 62,108)   // border of the plot area
+#define METER_GRIDCOL     RGB( 96, 54,100)   // grid lines inside the plot
+#define METER_DIMCOL      RGB(168,168,182)   // scale / secondary text
+#define METER_LINECOL     RGB(238, 72, 72)   // threshold line (red, like BioExplorer)
+#define METER_PEAKCOL     RGB(244,244,252)   // peak hold line
 
 static COLORREF meter_dim(COLORREF c, float f)
 {
@@ -56,7 +59,7 @@ void draw_meter(THRESHOLDOBJ * st)
 	HBRUSH br,oldbr;
 	HPEN pen,oldpen;
 	char szdata[48];
-	int  width,mid,bottom,top,height,act,peaky,y1,y2,i,pass;
+	int  width,mid,bottom,top,height,act,peaky,y1,y2,i,pass,headh;
 	float min,max;
 	DWORD now;
 
@@ -74,10 +77,28 @@ void draw_meter(THRESHOLDOBJ * st)
 	FillRect(memdc,&rect,br);
 	DeleteObject(br);
 
+	// ---- outer frame (light, like the BioExplorer display windows) -----
+	{
+		HPEN fp=CreatePen(PS_SOLID,2,METER_FRAMECOL);
+		HPEN op=(HPEN)SelectObject(memdc,fp);
+		HBRUSH ob=(HBRUSH)SelectObject(memdc,(HBRUSH)GetStockObject(NULL_BRUSH));
+
+		Rectangle(memdc,1,1,rect.right-1,rect.bottom-1);
+
+		SelectObject(memdc,ob);
+		SelectObject(memdc,op);
+		DeleteObject(fp);
+	}
+
 	// ---- header band --------------------------------------------------
+	// tall enough for the big value font (fontsize*2) next to the caption
+	headh=(st->fontsize>0) ? (int)((float)st->fontsize*2.4f) : METER_HEAD_H;
+	if (headh<METER_HEAD_H) headh=METER_HEAD_H;
 	tb=rect;
-	tb.bottom=tb.top+METER_HEAD_H;
+	tb.bottom=tb.top+headh;
 	if (tb.bottom>rect.bottom) tb.bottom=rect.bottom;
+	// keep the light outer frame visible around the header band
+	tb.left+=3; tb.right-=3; tb.top+=3;
 	br=CreateSolidBrush(st->fontbkcolor);
 	FillRect(memdc,&tb,br);
 	DeleteObject(br);
@@ -130,6 +151,31 @@ void draw_meter(THRESHOLDOBJ * st)
 	if (peaky<top)    peaky=top;
 	if (peaky>bottom) peaky=bottom;
 
+	// ---- plot area (deep purple, bordered) ----------------------------
+	{
+		RECT   pr;
+		HBRUSH pb;
+		HPEN   pe,ope;
+		HBRUSH obe;
+
+		pr.left=3; pr.right=rect.right-3;
+		pr.top=top-3; pr.bottom=bottom+2;
+		if (pr.top<tb.bottom)     pr.top=tb.bottom;
+		if (pr.bottom>rect.bottom-3) pr.bottom=rect.bottom-3;
+
+		pb=CreateSolidBrush(METER_PLOTCOL);
+		FillRect(memdc,&pr,pb);
+		DeleteObject(pb);
+
+		pe=CreatePen(PS_SOLID,1,METER_PLOTEDGE);
+		ope=(HPEN)SelectObject(memdc,pe);
+		obe=(HBRUSH)SelectObject(memdc,(HBRUSH)GetStockObject(NULL_BRUSH));
+		Rectangle(memdc,pr.left,pr.top,pr.right,pr.bottom);
+		SelectObject(memdc,obe);
+		SelectObject(memdc,ope);
+		DeleteObject(pe);
+	}
+
 	// ---- grid ---------------------------------------------------------
 	pen=CreatePen(PS_SOLID,1,METER_GRIDCOL);
 	oldpen=(HPEN)SelectObject(memdc,pen);
@@ -162,8 +208,8 @@ void draw_meter(THRESHOLDOBJ * st)
 	SelectObject(memdc,oldpen);
 	DeleteObject(pen);
 
-	// ---- threshold lines (dashed) -------------------------------------
-	pen=CreatePen(PS_DASH,1,METER_LINECOL);
+	// ---- threshold lines (solid red, like the BioExplorer meters) ------
+	pen=CreatePen(PS_SOLID,2,METER_LINECOL);
 	oldpen=(HPEN)SelectObject(memdc,pen);
 	MoveToEx(memdc,2,y1,NULL);
 	LineTo(memdc,rect.right-2,y1);
@@ -175,18 +221,31 @@ void draw_meter(THRESHOLDOBJ * st)
 	// ---- text ---------------------------------------------------------
 	if ((st->fontsize>0) && (st->font!=NULL))
 	{
-		SelectObject(memdc,st->font);
 		SetBkMode(memdc,TRANSPARENT);
 
-		// header: name on the left, value + unit on the right
+		// header: name on the left (small font)
+		SelectObject(memdc,st->font);
 		SetTextColor(memdc,st->fontcolor);
 		r=tb; r.left+=8; r.right-=8;
 		DrawText(memdc,st->wndcaption,-1,&r,
 		         DT_SINGLELINE|DT_LEFT|DT_VCENTER|DT_END_ELLIPSIS);
 
-		sprintf(szdata,"%.2f %s",st->current_value,st->in_ports[0].in_dim);
-		SetTextColor(memdc,pass ? meter_dim(st->color,1.35f) : METER_DIMCOL);
-		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
+		// header: current value on the right, big and coloured
+		sprintf(szdata,"%.1f",st->current_value);
+		SetTextColor(memdc,pass ? st->color : METER_DIMCOL);
+		{
+			HFONT vf=((st->valfont!=NULL)&&(rect.right>190)) ? st->valfont : st->font;
+			SelectObject(memdc,vf);
+		}
+		r=tb; r.right-=46;
+		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_BOTTOM);
+
+		// unit in the small font at the very right
+		SelectObject(memdc,st->font);
+		SetTextColor(memdc,METER_DIMCOL);
+		r=tb; r.left=r.right-44;
+		DrawText(memdc,st->in_ports[0].in_dim,-1,&r,
+		         DT_SINGLELINE|DT_RIGHT|DT_BOTTOM);
 
 		// scale labels on the left edge
 		SetTextColor(memdc,METER_DIMCOL);
@@ -196,7 +255,7 @@ void draw_meter(THRESHOLDOBJ * st)
 			int   y=bottom-(int)((float)height*(float)i/METER_GRIDSTEP);
 
 			sprintf(szdata,"%.0f",v);
-			r.left=2; r.right=40;
+			r.left=4; r.right=42;
 			r.top=y-7; r.bottom=y+7;
 			DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
 		}
@@ -204,11 +263,11 @@ void draw_meter(THRESHOLDOBJ * st)
 		// threshold values on the right edge
 		SetTextColor(memdc,METER_LINECOL);
 		sprintf(szdata,"%.1f",st->lower_limit);
-		r.left=rect.right-46; r.right=rect.right-3;
-		r.top=y1-7; r.bottom=y1+7;
+		r.left=rect.right-48; r.right=rect.right-4;
+		r.top=y1-8; r.bottom=y1+8;
 		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
 		sprintf(szdata,"%.1f",st->upper_limit);
-		r.top=y2-7; r.bottom=y2+7;
+		r.top=y2-8; r.bottom=y2+8;
 		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
 	}
 
@@ -748,6 +807,9 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 
 		if (!(font = CreateFont(-MulDiv(fontsize, GetDeviceCaps(GetDC(NULL), LOGPIXELSY), 72), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Arial")))
 			report_error("Font creation failed!");
+		valfont = CreateFont(-MulDiv(fontsize*2, GetDeviceCaps(GetDC(NULL), LOGPIXELSY), 72),
+		                     0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+		                     CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
 
         
 		if(!(displayWnd=CreateWindow("Meter_Class", wndcaption, WS_CLIPSIBLINGS| WS_CHILD | WS_CAPTION | WS_THICKFRAME ,left, top, right-left, bottom-top, ghWndMain, NULL, hInst, NULL)))
@@ -837,9 +899,28 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 			if (font) DeleteObject(font);
 		    if (!(font = CreateFont(-MulDiv(fontsize, GetDeviceCaps(GetDC(NULL), LOGPIXELSY), 72), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Arial")))
 					report_error("Font creation failed!");
+			if (valfont) DeleteObject(valfont);
+			valfont = CreateFont(-MulDiv(fontsize*2, GetDeviceCaps(GetDC(NULL), LOGPIXELSY), 72),
+			                     0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+			                     CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
 		}
 		load_property("barsize",P_INT,&barsize);
 		load_property("decayms",P_INT,&decayms);
+
+		// the meter caption was saved but never loaded - every meter fell back to
+		// the constructor default "Meter" after a design was opened
+		{
+			static char tmpcap[1024];
+
+			strncpy(tmpcap, wndcaption, sizeof(tmpcap)-1);
+			tmpcap[sizeof(tmpcap)-1]=0;
+			if (load_property("wndcaption",P_STRING,tmpcap))
+			{
+				strncpy(wndcaption, tmpcap, 49);
+				wndcaption[49]=0;
+			}
+			write_logfile("THRESHOLD: meter caption '%s'", wndcaption);
+		}
 
 		int tmp;
 		load_property("trueMode",P_INT,&trueMode);
@@ -1074,5 +1155,6 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 
 THRESHOLDOBJ::~THRESHOLDOBJ()
 	  {
+		if (valfont!=NULL){ DeleteObject(valfont); valfont=NULL; }
 		if  (displayWnd!=NULL){ DestroyWindow(displayWnd); displayWnd=NULL; }
 	  }  

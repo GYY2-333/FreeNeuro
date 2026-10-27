@@ -100,6 +100,28 @@ static LRESULT CALLBACK DarkSubclassProc(HWND hWnd, UINT msg, WPARAM wParam,
 		return (LRESULT)(DRAW.brush_dlg_edit ? DRAW.brush_dlg_edit :
 		                 (HBRUSH)GetStockObject(BLACK_BRUSH));
 
+	case WM_CLOSE:
+		{
+			/*  A modeless object settings dialog is only destroyed by its own
+			    EndDialog(). Nearly every object dialog starts with
+			        if ((st==NULL)||(st->type != OB_XXX)) return FALSE;
+			    so as soon as actobject points somewhere else (another object
+			    window was clicked, a design was loaded, an object was pasted,
+			    ...) the dialog ignores WM_CLOSE and the title bar X does
+			    nothing - the window can then never be closed again.
+
+			    Give the dialog procedure a chance first; only if it really
+			    ignored the message (returned FALSE) close it here. */
+			LRESULT r = DefSubclassProc(hWnd, msg, wParam, lParam);
+
+			if ((r == FALSE) && IsWindow(hWnd))
+			{
+				write_logfile("dialog: WM_CLOSE was ignored by the dialog procedure, closing it");
+				EndDialog(hWnd, IDCANCEL);
+			}
+			return TRUE;
+		}
+
 	case WM_NCDESTROY:
 		RemoveWindowSubclass(hWnd, DarkSubclassProc, uId);
 		break;

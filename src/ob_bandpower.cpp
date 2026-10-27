@@ -256,9 +256,9 @@ BANDPOWEROBJ::BANDPOWEROBJ(int num) : BASE_CL()
 	panelsize=24;
 	panelrows=BP_PANELCELLS/2;
 	showunits=1;
-	panelbk=RGB(16,16,20);
-	panelcaptcol=RGB(150,150,160);
-	panelvalcol=RGB(80,170,255);
+	panelbk=RGB(42,12,42);
+	panelcaptcol=RGB(168,168,182);
+	panelvalcol=RGB( 90,200,255);
 	valfont=NULL;
 	captfont=NULL;
 
@@ -788,6 +788,19 @@ void BANDPOWEROBJ::draw_panel(void)
 	FillRect(memdc,&rc,bkbrush);
 	DeleteObject(bkbrush);
 
+	// ---- outer frame (light, same style as the threshold meters) -------
+	{
+		HPEN fp=CreatePen(PS_SOLID,2,RGB(158,160,175));
+		HPEN op=(HPEN)SelectObject(memdc,fp);
+		HBRUSH ob=(HBRUSH)SelectObject(memdc,(HBRUSH)GetStockObject(NULL_BRUSH));
+
+		Rectangle(memdc,1,1,rc.right-1,rc.bottom-1);
+
+		SelectObject(memdc,ob);
+		SelectObject(memdc,op);
+		DeleteObject(fp);
+	}
+
 	if (columns<1) columns=1;
 	if (columns>BP_PANELCELLS) columns=BP_PANELCELLS;
 
@@ -816,7 +829,7 @@ void BANDPOWEROBJ::draw_panel(void)
 		if (v>bandmax) bandmax=v;
 	}
 
-	pen=CreatePen(PS_SOLID,1,RGB(70,70,82));
+	pen=CreatePen(PS_SOLID,1,RGB(96,54,100));
 	oldpen=(HPEN)SelectObject(memdc,pen);
 
 	for (k=0;k<ncells;k++)
@@ -842,8 +855,8 @@ void BANDPOWEROBJ::draw_panel(void)
 			HBRUSH bb;
 			RECT brc;
 
-			bh = ch/8; if (bh<3) bh=3; if (bh>8) bh=8;
-			by = cell.bottom-2-bh;
+			bh = ch/6; if (bh<4) bh=4; if (bh>10) bh=10;
+			by = cell.bottom-3-bh;
 			bwmax = cell.right-cell.left-10;
 			if (bwmax<4) bwmax=4;
 
@@ -861,7 +874,7 @@ void BANDPOWEROBJ::draw_panel(void)
 			brc.top    = by;
 			brc.bottom = by+bh;
 
-			bb=CreateSolidBrush(RGB(30,32,40));
+			bb=CreateSolidBrush(RGB(28,6,28));
 			FillRect(memdc,&brc,bb);
 			DeleteObject(bb);
 

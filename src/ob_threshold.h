@@ -69,6 +69,7 @@ class THRESHOLDOBJ : public BASE_CL
 	int  top,left,right,bottom;
 	char wndcaption[50];
 	HFONT font;
+	HFONT valfont;				// big bold font for the current value in the header
 	float numericTrueValue, numericFalseValue;
 	int trueMode;
 	int falseMode;
