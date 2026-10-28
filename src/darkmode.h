@@ -37,4 +37,15 @@ void InstallDarkSubclass(HWND hWnd);
 // versions that don't support it).
 void EnableDarkTitleBar(HWND hWnd);
 
+// Paint the frame (non-client area) of an object display window - the small
+// child windows that show meters, band power panels, the SWF movie ... - in the
+// dark theme colours: flat dark band, one pixel outline around the client area.
+// draw_caption = FALSE leaves the caption band empty, for objects that print
+// their own title inside the client area.
+//
+// IMPORTANT: only GetWindowDC() is used, the client area is never painted.
+// Filling the client area would cover child windows - the Flash ActiveX
+// control answers that with "repair Adobe Flash Player".
+void PaintDisplayFrame(HWND hWnd, BOOL draw_caption);
+
 #endif // DARKMODE_H

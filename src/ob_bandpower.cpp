@@ -788,18 +788,9 @@ void BANDPOWEROBJ::draw_panel(void)
 	FillRect(memdc,&rc,bkbrush);
 	DeleteObject(bkbrush);
 
-	// ---- outer frame (light, same style as the threshold meters) -------
-	{
-		HPEN fp=CreatePen(PS_SOLID,2,RGB(158,160,175));
-		HPEN op=(HPEN)SelectObject(memdc,fp);
-		HBRUSH ob=(HBRUSH)SelectObject(memdc,(HBRUSH)GetStockObject(NULL_BRUSH));
-
-		Rectangle(memdc,1,1,rc.right-1,rc.bottom-1);
-
-		SelectObject(memdc,ob);
-		SelectObject(memdc,op);
-		DeleteObject(fp);
-	}
+	// (the frame around the panel is drawn by the window itself - see
+	//  PaintDisplayFrame() in darkmode.cpp - a second one inside the client
+	//  area only produced a doubled border)
 
 	if (columns<1) columns=1;
 	if (columns>BP_PANELCELLS) columns=BP_PANELCELLS;

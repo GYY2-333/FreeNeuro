@@ -1,0 +1,230 @@
+===============================================================================
+ BrainBay 项目交接说明（进度 / 注意事项）
+ 生成时间：2026-10-27
+ 工作目录：E:\EE317-GYY\BrainBay
+===============================================================================
+
+一、环境与构建
+-------------------------------------------------------------------------------
+* 语言/工具链：C++ / Win32 API，MSVC v142（VS2019），Release / Win32
+* 编译脚本：
+    E:\EE317-GYY\BrainBay\tools\build_brainbay.bat
+      - 增量编译 brainBay.sln（Release / Win32 / v142）
+      - 结束后把 src\Release\BrainBay.exe 复制到 ..\bin\BrainBay.exe
+      - 输出 BUILD_EXITCODE=0 / COPY_EXITCODE=0 表示成功
+* **【大坑 1】头文件里的类成员一改动，必须完整重编译**
+    MSBuild 增量编译时 globals.cpp 里的 new 可能仍用旧的 sizeof，
+    运行时会堆损坏 0xC0000374。改 *.h 后必须：
+      MSBuild.exe brainBay.sln /t:Rebuild /p:Configuration=Release
+                  /p:Platform=Win32 /p:PlatformToolset=v142
+* **【大坑 2】bin\BrainBay.exe 会被 Visual Studio 的 Debug 构建覆盖**
+    brainBay.vcxproj 的生成后事件无条件把输出复制到 ..\bin。
+    Release 大小 ≈ 4,133,888 字节；Debug 大小 ≈ 7,750,000 字节。
+    运行前先确认 bin\BrainBay.exe 是 4.1 MB，否则跑的是 Debug 版。
+    （待办：把 post-build 改成只在 Release 配置下复制）
+* **【大坑 3】exe 被占用时复制失败**
+    BrainBay 正在运行时 copy 会失败（COPY_EXITCODE=1）。
+    变通办法：先给运行中的 exe 改名，再复制：
+      Move-Item bin\BrainBay.exe bin\BrainBay.exe.prev -Force
+      Copy-Item src\Release\BrainBay.exe bin\BrainBay.exe -Force
+    （Windows 允许重命名正在运行的 exe）
+
+二、当前版本状态（2026-10-27 17:34）
+-------------------------------------------------------------------------------
+* git 分支 main，HEAD = f27a259「控件界面优化」，工作区干净
+  （提交 f45d228「优化」及之后所有改动已被 reset --hard 丢弃，
+    若需要可用 git reflog 找回：git reset --hard f45d228）
+* 回退前的源码备份：E:\EE317-GYY\BrainBay\tools\_tmp\backup_before_revert\
+  （src\*.cpp、src\*.h、physioamp_flash_puzzle.con 共 184 个文件）
+* 已部署：bin\BrainBay.exe = 4,133,888 字节（Release，17:34:01）
+* 实测结论：当前版本下
+    physioamp_flash_puzzle      → 游戏正常显示并运行（已截图验证）
+    physioamp_flash_neuropuzzles→ 同样正常
+  日志均为：Flash: SetVariable() works / ReadyState=4 / TotalFrames=1
+
+三、两个设计文件的关键差异
+-------------------------------------------------------------------------------
+目录：bin\CONFIGURATIONS\EEG\
+  physioamp_flash_neuropuzzles.con   （老的“阈值直驱”版本）
+  physioamp_flash_puzzle.con         （照宝尔 bxd 重做的版本，10 个对象）
+
+                          neuropuzzles            puzzle
+  Flash channels          3 (In1/In2/In3)         2 (In1/In2)
+  Flash drive             0（原值透传）            1（内部生成）
+  gateport                —                       0
+  scorems / clockms       —                       1000 / 1000
+  阈值去向                直接进 Flash 三个输入     先过两个 AND，只用来开关计分闸门
+  两者都能正常运行；差别只在“游戏怎么被推进”。
+
+physioamp_flash_puzzle.con 结构（10 个对象）
+   0  EEG        PhysioAmp devicetype=15，3000 Hz
+   1  ARTIFACT
+   2  BAND-POWER 前 7 个频带（bp_first=0, bp_cells=7, bp_columns=1,
+                 bp_hl=50, bp_units=3 → µV RMS）
+   3  THRESHOLD  ATTENTION  SMR 12-15 Hz ≥ 5 uV   interval_len=3000
+   4  THRESHOLD  DISTRACT   theta 4-8 Hz ≤ 20 uV  interval_len=3000
+   5  THRESHOLD  TENSION    beta 22-30 Hz ≤ 20 uV interval_len=6000
+   6  AND        3 + 4
+   7  AND        5 + 6
+   8  FLASH      swf = C:\Program Files (x86)\BioExplorer\Flash\simpleAdapterLoader.swf
+                 channels=2, drive=1, gateport=0, scorevar=In1, clockvar=In2
+   9  BAND-POWER 7 个比值（bp_first=7, bp_cells=7, bp_hl=0, bp_units=3）
+* 信号流（照抄宝尔 .bxd 的思路）：
+    三个阈值 → AND → AND → Flash.gateport
+    闸门打开时 In1(计分) 每秒 +1；In2(心跳) 一直 +1；
+    NeuroPuzzles 的 In1In2InputModel 只在 In1 增长时前进 → 画面推进
+
+四、关键源码位置
+-------------------------------------------------------------------------------
+src\ob_flash.h / ob_flash.cpp   Flash 对象（OB 78）
+    - ShockwaveFlash ActiveX 宿主：AtlAxWinInit + AtlAxCreateControlEx
+    - 需要最小 CAtlModule（_pAtlModule 为 NULL 会 0xC0000005）
+    - 变量名大小写敏感：In1 / In2（写 in1 会让加载器认为未定义 → 永久 PAUSED）
+    - drive 模式：闸门开→In1 每秒 +1，In2 心跳一直 +1
+    - **绝对不要销毁重建控件**，会显示“必要组件未能正常运行，请修复 Adobe Flash”
+    - Movie/BGColor 用 BSTR；Quality/ScaleMode 必须 VT_I4
+src\ob_threshold.h / .cpp       阈值对象 + 表头/绘图区/阈值线/峰值线绘制
+src\ob_bandpower.cpp            频带面板绘制（bp_units=3 → µV RMS）
+src\dialogs.cpp                 tile_display_windows()（左右两翼 + 中间上排 + Flash 在下）
+                                update_canvas_window()、close_toolbox()
+src\files.cpp                   load_configfile()：载入成功后最大化 + tile_display_windows()
+src\darkmode.cpp                暗色主题 + 对话框子类化（WM_CLOSE 兜底关闭）
+src\brainBay.cpp                主窗口消息、IDM_PLAY/IDM_STOP、WM_SIZE 里 tile
+
+五、已确认的问题与根因（历史，避免重犯）
+-------------------------------------------------------------------------------
+1) 游戏画面静止不动
+   → 变量名写成 in1/in2；必须 In1/In2（大小写敏感）
+2) 阈值从未触发，闸门一直关
+   → 脑电输入满量程饱和：PhysioAmp raw: min≈40 max≈65520 spread≈65490
+     典型是电极悬空 / 参考或接地没接好 / 导联松脱。
+     theta 27~1660 µV、beta 1~170 µV 远超阈值 20 µV → DISTRACT 几乎永不满足
+3) “必要的系统组件未能正常运行，请修复 Adobe Flash Player” 错误页
+   → 与设计文件无关（两个设计在 Flash 层日志完全一致）。
+     已定位为界面改动的副作用，回退后消失：
+       a. 给 Flash 窗口加了 WM_PAINT 并整块填充客户区
+          → 覆盖了 ActiveX 子窗口（父窗口没有 WS_CLIPCHILDREN）
+       b. 去掉 WS_CAPTION + 把 ActiveX 内缩 3px 做自绘边框
+       c. bin 被 7.75 MB 的 Debug 构建覆盖
+     教训：Flash 面板上不要做“覆盖客户区”的绘制；要留边框只能改非客户区，
+           或把控件内缩并只画边框带，且必须加 WS_CLIPCHILDREN
+4) 设置对话框关不掉
+   → 各对话框过程开头有 if (st->type != OB_X) return FALSE;，
+     actobject 变化后所有消息（含 WM_CLOSE）都被丢弃。
+     已在 darkmode.cpp 的 WM_CLOSE 兜底 + close_toolbox() 的 DestroyWindow 兜底修复
+5) 所有仪表标题都显示 “Meter”
+   → THRESHOLD::save() 写 wndcaption，但 load() 没读；已修复
+
+6) 控件展示窗口的“双边框 / 浅色标题栏”（2026-10-27 修）
+   → 对象显示窗口都是 WS_CHILD + WS_CAPTION + WS_THICKFRAME，系统按经典浅色
+     画标题栏和 3D 边框；ob_threshold / ob_bandpower 又在客户区里画了一圈 2px
+     浅色描边 → 看起来是双边框，而且在暗色主题上非常跳。
+   修法（全程不碰客户区，避免重蹈 3) 的覆辙）：
+     a. src\darkmode.cpp 新增 PaintDisplayFrame(hWnd, draw_caption)：
+        只用 GetWindowDC()，把整块非客户区刷成暗色 RGB(22,22,26)，沿客户区画
+        1px 描边 RGB(76,78,90)，标题文字用暗灰 RGB(156,158,170) 画在标题带里
+     b. src\dialogs.cpp 的 CanvasClampSubclassProc 里拦 WM_NCPAINT/WM_NCACTIVATE
+        调用它 —— 这个子类已经由 sweep_canvas_windows() 给主窗口的所有子窗口
+        装上，所以一处改动覆盖全部对象显示窗口
+     c. Meter_Class 的标题带留空（面板自己在客户区顶部画标题带，避免标题重复）
+     d. 仪表窗口去掉 WS_CAPTION → 边框变成均匀 8px；Band-Power / Flash 保留
+        WS_CAPTION（它们唯一的标题就写在标题带里）
+     e. 删除 ob_threshold / ob_bandpower 在客户区内自绘的浅色 2px 外框
+     f. 顺带修掉仪表下边缘把刻度“0”和阈值数字裁掉的问题：
+        bottom=rect.bottom-10，右边缘阈值数字框加宽到 64px 并做上下夹紧
+     g. 仪表顶端的大号数值被面板上沿裁掉：标题带高度原来按
+        fontsize*2.4（像素）估，而数值字体是 fontsize*2（磅），实际行高更大
+        → 数字顶部被切。现在用 GetTextMetrics() 量 st->font / st->valfont
+        的真实行高再 +8px（上下各 4px 内边距），并夹在 METER_HEAD_H 与
+        rect.bottom/2 之间（小面板不会被标题带吞掉）；标题/数值/单位统一
+        DT_BOTTOM 对齐，数值右侧留 6px、单位再占 44px，都不贴边框
+     h. 初始界面顶部那条被切一半的 “Welcome to BrainBay - Select demo session !”
+        是自己造成的：SessionManager_Class 只有 WS_THICKFRAME（8px 边框、
+        没有 WS_CAPTION），而画标题文字的条件只写了 “cr.top>6”，于是整句
+        标题被塞进 8px 的窄带里上下都被切。现在必须先判断窗口样式：
+        if ((GetWindowLong(GWL_STYLE) & WS_CAPTION) && (cr.top>=SM_CYCAPTION))
+        才画标题文字 —— 没有标题栏的窗口（仪表、会话管理器）只画平面边框
+   验证：截图确认三个仪表只剩自己的标题带、频带面板/Flash 标题为暗灰小字；
+        bbay.log 仍是 “Flash: SetVariable() works”，画面正常推进
+   教训：想改这些窗口的“边框”，只画非客户区（WM_NCPAINT）永远安全；
+        在客户区里填充/描边就可能盖住 ActiveX 子窗口
+
+六、待办 / 下一步
+-------------------------------------------------------------------------------
+[ ] 阈值标定：按实测信号把 ATTENTION/DISTRACT/TENSION 调到可达范围，
+    或改成自适应（.con 里 adapt_lower_mode / adapt_upper_mode = 3 平均值模式，
+    limit 例 70 / 130）。可另存为 physioamp_flash_puzzle_adapt.con 做对比。
+[ ] 电极端：确认原始波形正常（不应在 0~65535 间乱跳）
+[ ] brainBay.vcxproj 生成后事件限制为只在 Release 配置下复制到 bin
+[x] 控件展示窗口的边框美化（2026-10-27 完成，见 五.6）
+[ ] Flash 面板进一步美化（如需）：仍只能在“不覆盖子窗口”的前提下做，
+    参考上面 五.3) 的教训
+[ ] 若之后仍出现 Flash 错误页：先确认 bin\BrainBay.exe ≈ 4.13 MB（Release）
+
+七、.con 文件规范（踩过的坑）
+-------------------------------------------------------------------------------
+* 属性名必须全小写（load_property 用 strstr 在转小写的缓冲里找）
+* 颜色必须同时写 color / bkcol / fontcol / fontbkcol
+  否则 loader 会强制白底
+* 阈值：falsemode=0 不满足时输出 INVALID_VALUE(-32767)，满足时输出 1
+* AND：两路都非 INVALID 时输出 TRUE_VALUE(512)
+* 窗口几何 left/top/right/bottom 是相对主窗口的像素值
+
+八、工具脚本（tools\）
+-------------------------------------------------------------------------------
+build_brainbay.bat        编译 Release 并复制到 bin
+load_test.ps1             用 brainbay.cfg 的 startdesignpath 载入设计跑 N 秒，
+                          结束后杀掉进程、恢复 cfg、打印 bbay.log
+                          powershell -NoProfile -ExecutionPolicy Bypass -File
+                            tools\load_test.ps1 -Design "EEG\physioamp_flash_puzzle" -Seconds 8
+capture_design.ps1        自动化：启动 → PostMessage IDM_PLAY(32830) 开始会话
+                          → PrintWindow 抓窗口截图 PNG（可直接看 Flash 是否正常）
+capture_tiled.ps1         启动 → ShowWindow(Design_Class, SW_HIDE) 隐藏画布
+                          → IDM_PLAY → CopyFromScreen 抓“只剩展示面板”的截图
+                          （检查平铺布局与边框用；GUI 脚本请用异步方式跑，
+                            终端同步模式下中途会把脚本掐掉）
+flash_probe.ps1           （早期探针，功能已被 capture_design.ps1 覆盖）
+validate_con.ps1          检查 .con 关键属性（falsemode、drive 模式、按类型必需属性）
+bxd_parse.py / bxd_objects.py / bxd_graph.py / bxd_settings.py
+                          宝尔 .bxd(OLE2) 解析：对象、端口、连接图、PostConnectionObjects 参数
+swf_strings.ps1 / swf_cn.ps1
+                          SWF 字符串提取、解析（用于确认加载器读的变量名/ini）
+bmp2png.ps1 / bmp2png.bat BMP 转 PNG
+
+九、常用命令速查
+-------------------------------------------------------------------------------
+# 完整重编译（改了 *.h 之后必须）
+& "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\MSBuild.exe" `
+  "E:\EE317-GYY\BrainBay\src\brainBay.sln" /t:Rebuild /p:Configuration=Release `
+  /p:Platform=Win32 /p:PlatformToolset=v142 /m /v:m /nologo
+
+# 载入设计做冒烟测试
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  E:\EE317-GYY\BrainBay\tools\load_test.ps1 -Design "EEG\physioamp_flash_puzzle" -Seconds 8
+
+# 看日志
+Get-Content E:\EE317-GYY\BrainBay\bin\bbay.log -Tail 40
+
+# 确认部署的是 Release
+(Get-Item E:\EE317-GYY\BrainBay\bin\BrainBay.exe).Length   # 应为 4133888 左右
+
+# git
+Set-Location E:\EE317-GYY\BrainBay; git log --oneline -5; git status --porcelain
+  （git 在 E:\Git\Git\cmd\git.exe，已加入 PATH）
+
+十、日志中的关键判据（bbay.log）
+-------------------------------------------------------------------------------
+正常：
+  Flash: ActiveX control created
+  Flash: loading '<swf>'
+  Flash: SetVariable() works, the movie is under control
+  Flash: ReadyState=4 PercentLoaded=-1 TotalFrames=1
+异常线索：
+  TotalFrames 不是 1（例如 2）      → 影片被错误页替换
+  没有 SetVariable() works           → 控件不可用 / 未进入会话
+  PhysioAmp raw: spread≈65500        → 输入饱和（电极/接地问题）
+  bandpower: theta/beta 上千 µV      → 同上，阈值不可能满足
+
+===============================================================================
+（完）
+===============================================================================

@@ -36,7 +36,6 @@
 
 #define METER_HEAD_H      22          // header band height in pixels
 #define METER_GRIDSTEP    4           // number of horizontal grid divisions
-#define METER_FRAMECOL    RGB(158,160,175)   // light frame around the panel
 #define METER_PLOTCOL     RGB( 42, 12, 42)   // deep purple plot area
 #define METER_PLOTEDGE    RGB(102, 62,108)   // border of the plot area
 #define METER_GRIDCOL     RGB( 96, 54,100)   // grid lines inside the plot
@@ -77,28 +76,41 @@ void draw_meter(THRESHOLDOBJ * st)
 	FillRect(memdc,&rect,br);
 	DeleteObject(br);
 
-	// ---- outer frame (light, like the BioExplorer display windows) -----
-	{
-		HPEN fp=CreatePen(PS_SOLID,2,METER_FRAMECOL);
-		HPEN op=(HPEN)SelectObject(memdc,fp);
-		HBRUSH ob=(HBRUSH)SelectObject(memdc,(HBRUSH)GetStockObject(NULL_BRUSH));
-
-		Rectangle(memdc,1,1,rect.right-1,rect.bottom-1);
-
-		SelectObject(memdc,ob);
-		SelectObject(memdc,op);
-		DeleteObject(fp);
-	}
+	// (the frame around the panel is drawn by the window itself, see
+	//  PaintDisplayFrame() in darkmode.cpp - drawing another one here would
+	//  give the double border the design used to show)
 
 	// ---- header band --------------------------------------------------
-	// tall enough for the big value font (fontsize*2) next to the caption
-	headh=(st->fontsize>0) ? (int)((float)st->fontsize*2.4f) : METER_HEAD_H;
+	// Tall enough for the big value font AND the caption next to it. The old
+	// estimate (fontsize*2.4 pixels) was smaller than the real glyph height of
+	// the fontsize*2 point value font, so the digits were clipped by the top
+	// edge of the panel. Measure the fonts instead of guessing.
+	headh=METER_HEAD_H;
+	{
+		TEXTMETRIC tm;
+		HFONT      of;
+
+		if ((st->fontsize>0) && (st->font!=NULL))
+		{
+			of=(HFONT)SelectObject(memdc,st->font);
+			if (GetTextMetrics(memdc,&tm)) headh=tm.tmHeight;
+			SelectObject(memdc,of);
+		}
+		if ((st->valfont!=NULL) && (rect.right>190))          // same condition as when drawing
+		{
+			of=(HFONT)SelectObject(memdc,st->valfont);
+			if ((GetTextMetrics(memdc,&tm)) && (tm.tmHeight>headh)) headh=tm.tmHeight;
+			SelectObject(memdc,of);
+		}
+	}
+	headh+=8;                                              // 4 px above and below the text
 	if (headh<METER_HEAD_H) headh=METER_HEAD_H;
+	if (headh>(rect.bottom/2)) headh=rect.bottom/2;        // never swallow the plot area
+	if (headh<(METER_HEAD_H/2)) headh=METER_HEAD_H/2;      // ... but stay usable when tiny
 	tb=rect;
 	tb.bottom=tb.top+headh;
 	if (tb.bottom>rect.bottom) tb.bottom=rect.bottom;
-	// keep the light outer frame visible around the header band
-	tb.left+=3; tb.right-=3; tb.top+=3;
+	// the band spans the full width, it is the title bar of the panel
 	br=CreateSolidBrush(st->fontbkcolor);
 	FillRect(memdc,&tb,br);
 	DeleteObject(br);
@@ -108,7 +120,9 @@ void draw_meter(THRESHOLDOBJ * st)
 	if (max<=min) max=min+1.0f;
 
 	top=tb.bottom+6;
-	bottom=rect.bottom-4;
+	// leave room below the lowest scale label, otherwise the "0" and the lower
+	// threshold value are cut off by the bottom edge of the panel
+	bottom=rect.bottom-10;
 	if (bottom-top<12) { top=tb.bottom; bottom=rect.bottom; }
 	height=bottom-top;
 	if (height<1) height=1;
@@ -223,12 +237,13 @@ void draw_meter(THRESHOLDOBJ * st)
 	{
 		SetBkMode(memdc,TRANSPARENT);
 
-		// header: name on the left (small font)
+		// header: name on the left (small font), on the same text line as the
+		// value - the bottom padding keeps both off the panel edge
 		SelectObject(memdc,st->font);
 		SetTextColor(memdc,st->fontcolor);
-		r=tb; r.left+=8; r.right-=8;
+		r=tb; r.left+=8; r.right-=8; r.bottom-=4;
 		DrawText(memdc,st->wndcaption,-1,&r,
-		         DT_SINGLELINE|DT_LEFT|DT_VCENTER|DT_END_ELLIPSIS);
+		         DT_SINGLELINE|DT_LEFT|DT_BOTTOM|DT_END_ELLIPSIS);
 
 		// header: current value on the right, big and coloured
 		sprintf(szdata,"%.1f",st->current_value);
@@ -237,13 +252,14 @@ void draw_meter(THRESHOLDOBJ * st)
 			HFONT vf=((st->valfont!=NULL)&&(rect.right>190)) ? st->valfont : st->font;
 			SelectObject(memdc,vf);
 		}
-		r=tb; r.right-=46;
+		// 46 px for the unit, 6 px inset - otherwise the digits run into the frame
+		r=tb; r.right-=52; r.bottom-=4;
 		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_BOTTOM);
 
 		// unit in the small font at the very right
 		SelectObject(memdc,st->font);
 		SetTextColor(memdc,METER_DIMCOL);
-		r=tb; r.left=r.right-44;
+		r=tb; r.right-=6; r.left=r.right-44; r.bottom-=4;
 		DrawText(memdc,st->in_ports[0].in_dim,-1,&r,
 		         DT_SINGLELINE|DT_RIGHT|DT_BOTTOM);
 
@@ -263,11 +279,15 @@ void draw_meter(THRESHOLDOBJ * st)
 		// threshold values on the right edge
 		SetTextColor(memdc,METER_LINECOL);
 		sprintf(szdata,"%.1f",st->lower_limit);
-		r.left=rect.right-48; r.right=rect.right-4;
-		r.top=y1-8; r.bottom=y1+8;
+		r.left=rect.right-64; r.right=rect.right-4;
+		r.top=y1-9; r.bottom=y1+9;
+		if (r.top<0)                 { r.top=0; r.bottom=18; }
+		if (r.bottom>rect.bottom)    { r.bottom=rect.bottom; r.top=rect.bottom-18; }
 		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
 		sprintf(szdata,"%.1f",st->upper_limit);
-		r.top=y2-8; r.bottom=y2+8;
+		r.top=y2-9; r.bottom=y2+9;
+		if (r.top<0)                 { r.top=0; r.bottom=18; }
+		if (r.bottom>rect.bottom)    { r.bottom=rect.bottom; r.top=rect.bottom-18; }
 		DrawText(memdc,szdata,-1,&r,DT_SINGLELINE|DT_RIGHT|DT_VCENTER);
 	}
 
@@ -512,7 +532,10 @@ LRESULT CALLBACK ThresholdDlgHandler( HWND hDlg, UINT message, WPARAM wParam, LP
 				   if ((st->showmeter)&&(!i)&&(st->displayWnd))  { DestroyWindow(st->displayWnd); st->displayWnd=NULL; }
 				   if ((!st->showmeter)&&(i)) 
 				   {  
-					   if(!(st->displayWnd=CreateWindow("Meter_Class", st->wndcaption, WS_CLIPSIBLINGS| WS_CHILD | WS_CAPTION | WS_THICKFRAME ,st->left, st->top, st->right-st->left, st->bottom-st->top, ghWndMain, NULL, hInst, NULL)))
+					   // no WS_CAPTION: the panel paints its own title band at the top of
+				   // the client area, a second (empty) caption bar would only add a
+				   // 23 pixel dark strip above it
+				   if(!(st->displayWnd=CreateWindow("Meter_Class", st->wndcaption, WS_CLIPSIBLINGS| WS_CHILD | WS_THICKFRAME ,st->left, st->top, st->right-st->left, st->bottom-st->top, ghWndMain, NULL, hInst, NULL)))
 							report_error("can't create Meter Window");
 					   else { st->last_value=0; ShowWindow( st->displayWnd, TRUE ); UpdateWindow( st->displayWnd ); }
 				   }
@@ -812,7 +835,9 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 		                     CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
 
         
-		if(!(displayWnd=CreateWindow("Meter_Class", wndcaption, WS_CLIPSIBLINGS| WS_CHILD | WS_CAPTION | WS_THICKFRAME ,left, top, right-left, bottom-top, ghWndMain, NULL, hInst, NULL)))
+		// no WS_CAPTION - the meter draws its own title band inside the client
+		// area (see draw_meter()), so the window only needs the sizing border
+		if(!(displayWnd=CreateWindow("Meter_Class", wndcaption, WS_CLIPSIBLINGS| WS_CHILD | WS_THICKFRAME ,left, top, right-left, bottom-top, ghWndMain, NULL, hInst, NULL)))
 		    report_error("can't create Meter Window");
 		else { SetForegroundWindow(displayWnd); ShowWindow( displayWnd, TRUE ); UpdateWindow( displayWnd ); }
 		InvalidateRect(displayWnd, NULL, TRUE);

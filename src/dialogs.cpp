@@ -2258,6 +2258,18 @@ static LRESULT CALLBACK CanvasClampSubclassProc(HWND hWnd, UINT msg, WPARAM wPar
 		}
 		break;
 
+	case WM_NCPAINT:
+	case WM_NCACTIVATE:
+		// Object display windows keep their classic light caption bar and 3D
+		// border unless we draw the non-client area ourselves. Paint it in the
+		// dark theme colours; the client area is left alone, so child windows
+		// (the Flash ActiveX control) are never covered. Windows without a
+		// caption (meters, session manager) only get the flat frame - see
+		// PaintDisplayFrame(), which checks the WS_CAPTION style itself.
+		PaintDisplayFrame(hWnd,TRUE);
+		if (msg==WM_NCACTIVATE) return TRUE;   // the frame has been repainted
+		return 0;
+
 	case WM_NCDESTROY:
 		RemoveWindowSubclass(hWnd, CanvasClampSubclassProc, uId);
 		break;

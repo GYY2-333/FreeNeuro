@@ -130,6 +130,114 @@ static LRESULT CALLBACK DarkSubclassProc(HWND hWnd, UINT msg, WPARAM wParam,
 }
 
 // ---------------------------------------------------------------------------
+//  Object display frames.
+//
+//  The display windows of the signal objects (threshold meters, band power
+//  panels, the Flash movie ...) are plain WS_CHILD windows with a caption and
+//  a 3D sizing border, so Windows paints them in the classic light look. On
+//  the dark canvas that shows up as a light grey title bar plus a light frame
+//  around every panel - and the panels themselves drew another light 2px
+//  rectangle inside the client area, which looked like a double border.
+//
+//  Here the whole non-client area is painted in theme colours: a flat dark
+//  band, the caption text in dim grey and a one pixel outline that hugs the
+//  client area. Only GetWindowDC() is used; the client area stays untouched so
+//  child windows (Flash ActiveX!) are never covered.
+// ---------------------------------------------------------------------------
+#define DM_FRAME_BACK   RGB( 22, 22, 26)
+#define DM_FRAME_LINE   RGB( 76, 78, 90)
+#define DM_FRAME_TEXT   RGB(156,158,170)
+
+void PaintDisplayFrame(HWND hWnd, BOOL draw_caption)
+{
+	HDC    hdc;
+	RECT   wr, cr, r;
+	HBRUSH br;
+	POINT  pt;
+	int    W, H, x0, y0, x1, y1;
+
+	if ((hWnd==NULL)||(!IsWindow(hWnd))) return;
+
+	hdc=GetWindowDC(hWnd);
+	if (hdc==NULL) return;
+
+	GetWindowRect(hWnd,&wr);
+	W=wr.right-wr.left;
+	H=wr.bottom-wr.top;
+
+	// client rectangle in window coordinates
+	GetClientRect(hWnd,&cr);
+	pt.x=0; pt.y=0;
+	ClientToScreen(hWnd,&pt);
+	OffsetRect(&cr,pt.x-wr.left,pt.y-wr.top);
+
+	if ((W<4)||(H<4)||((cr.right-cr.left)<=0)||((cr.bottom-cr.top)<=0))
+	{
+		ReleaseDC(hWnd,hdc);
+		return;
+	}
+
+	// ---- flat dark frame (everything that is not the client area) ------
+	br=CreateSolidBrush(DM_FRAME_BACK);
+	if (cr.top>0)    { SetRect(&r,0,0,W,cr.top);                   FillRect(hdc,&r,br); }
+	if (cr.bottom<H) { SetRect(&r,0,cr.bottom,W,H);                FillRect(hdc,&r,br); }
+	if (cr.left>0)   { SetRect(&r,0,cr.top,cr.left,cr.bottom);     FillRect(hdc,&r,br); }
+	if (cr.right<W)  { SetRect(&r,cr.right,cr.top,W,cr.bottom);    FillRect(hdc,&r,br); }
+	DeleteObject(br);
+
+	// ---- one pixel outline around the client area ----------------------
+	x0=(cr.left>0)  ? cr.left-1 : 0;
+	y0=(cr.top>0)   ? cr.top-1  : 0;
+	x1=(cr.right<W) ? cr.right  : W-1;
+	y1=(cr.bottom<H)? cr.bottom : H-1;
+
+	br=CreateSolidBrush(DM_FRAME_LINE);
+	if (cr.top>0)    { SetRect(&r,x0,y0,x1+1,y0+1); FillRect(hdc,&r,br); }
+	if (cr.bottom<H) { SetRect(&r,x0,y1,x1+1,y1+1); FillRect(hdc,&r,br); }
+	if (cr.left>0)   { SetRect(&r,x0,y0,x0+1,y1+1); FillRect(hdc,&r,br); }
+	if (cr.right<W)  { SetRect(&r,x1,y0,x1+1,y1+1); FillRect(hdc,&r,br); }
+	DeleteObject(br);
+
+	// ---- caption text, dim grey on the dark band -----------------------
+	// Only when the window really has a caption bar. A window that only has
+	// WS_THICKFRAME (the session manager, the meters) gets an 8 pixel frame and
+	// no caption band at all - drawing the text there clipped it in half and
+	// left a cut off title line above the panel.
+	if (draw_caption)
+	{
+		long style=GetWindowLong(hWnd,GWL_STYLE);
+		int  caph;                                  // height of the caption band
+
+		caph=GetSystemMetrics(SM_CYCAPTION);
+		if ((style & WS_CAPTION) && (caph>0) && (cr.top>=caph))
+		{
+			char text[128];
+
+			text[0]=0;
+			GetWindowText(hWnd,text,sizeof(text)-1);
+			text[sizeof(text)-1]=0;
+
+			if (text[0]!=0)
+			{
+				HFONT ofont;
+
+				ofont=(HFONT)SelectObject(hdc,GetStockObject(DEFAULT_GUI_FONT));
+				SetBkMode(hdc,TRANSPARENT);
+				SetTextColor(hdc,DM_FRAME_TEXT);
+
+				SetRect(&r,6,0,W-6,cr.top);
+				DrawText(hdc,text,-1,&r,
+				         DT_SINGLELINE|DT_VCENTER|DT_LEFT|DT_END_ELLIPSIS|DT_NOPREFIX);
+
+				SelectObject(hdc,ofont);
+			}
+		}
+	}
+
+	ReleaseDC(hWnd,hdc);
+}
+
+// ---------------------------------------------------------------------------
 //  Public: install the dark subclass on a dialog window.
 // ---------------------------------------------------------------------------
 void InstallDarkSubclass(HWND hWnd)
