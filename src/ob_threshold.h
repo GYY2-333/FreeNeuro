@@ -65,6 +65,7 @@ class THRESHOLDOBJ : public BASE_CL
 	int old_y1,old_y2;
 	int barsize,fontsize;
 	int redraw;
+	DWORD last_data_tick;			// GetTickCount() of the last sample that arrived
 	COLORREF color,bkcolor, fontcolor, fontbkcolor;
 	int  top,left,right,bottom;
 	char wndcaption[50];

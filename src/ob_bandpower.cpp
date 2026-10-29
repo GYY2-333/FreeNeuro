@@ -276,6 +276,7 @@ BANDPOWEROBJ::BANDPOWEROBJ(int num) : BASE_CL()
 	last_fs=0;
 	updates=0;
 	gate=1.0f;
+	last_data_tick=0;
 
 	update_outport_ranges();
 	reset_dsp();
@@ -415,6 +416,7 @@ float BANDPOWEROBJ::ratio_value(int r)
 
 void BANDPOWEROBJ::incoming_data(int port, float value)
 {
+	last_data_tick=GetTickCount();          // keeps the stale watchdog quiet
 	if (port==1) gate=value;
 	else input_value=value;
 }
@@ -927,10 +929,32 @@ void BANDPOWEROBJ::draw_panel(void)
 }
 
 
+// A disconnected device leaves the signal chain without samples: the graph
+// stops running, so the panel would keep showing the last band powers forever.
+#define BP_WATCH_TIMER 0x4250
+#define BP_WATCH_MS    500
+#define BP_DATA_TIMEOUT_MS 1500
+
+static int bp_data_stale(BANDPOWEROBJ *st)
+{
+	if (!GLOBAL.running) return 0;                 // only while a session runs
+	if (st->last_data_tick == 0) return 0;         // no data seen yet
+	return ((LONG) (GetTickCount() - st->last_data_tick) > BP_DATA_TIMEOUT_MS);
+}
+
+
 LRESULT CALLBACK BandPanelWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	int t;
 	BANDPOWEROBJ * st;
+
+	// during WM_CREATE displayWnd is not stored in the object yet, so the watch
+	// timer has to be installed before the object is looked up below
+	if (message == WM_CREATE)
+	{
+		SetTimer(hWnd, BP_WATCH_TIMER, BP_WATCH_MS, NULL);
+		return 0;
+	}
 
 	st=NULL;
 	for (t=0;(t<GLOBAL.objects)&&(st==NULL);t++)
@@ -944,6 +968,25 @@ LRESULT CALLBACK BandPanelWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPA
 
 	switch( message )
 	{
+		case WM_TIMER:
+			if (wParam == BP_WATCH_TIMER)
+			{
+				// device gone: zero the bands instead of freezing the last values
+				if (bp_data_stale(st))
+				{
+					int k;
+
+					for (k=0;k<BP_BANDS;k++) { st->rawpow[k]=0.0f; st->avgpow[k]=0.0f; }
+					st->updates=0;
+					InvalidateRect(hWnd, NULL, TRUE);
+				}
+			}
+			break;
+
+		case WM_DESTROY:
+			KillTimer(hWnd, BP_WATCH_TIMER);
+			break;
+
 		case WM_KEYDOWN:
 			SendMessage(ghWndMain,message,wParam,lParam);
 			break;

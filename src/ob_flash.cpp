@@ -426,6 +426,20 @@ static int flash_drive_channel(FLASHOBJ *st, const char *name, int fallback)
 }
 
 
+// A disconnected device leaves the signal chain without samples: every object
+// keeps its last value while this one would keep ticking In2 (and In1 while the
+// gate was open), so the puzzle would run on forever. Freeze it once no sample
+// has arrived for a while - In1/In2 stop changing and the loader pauses.
+#define FLASH_DATA_TIMEOUT_MS 1000
+
+static int flash_data_stale(FLASHOBJ *st)
+{
+	if (!GLOBAL.running) return 0;                 // only while a session runs
+	if (st->last_data_tick == 0) return 0;         // no data seen yet
+	return ((LONG) (GetTickCount() - st->last_data_tick) > FLASH_DATA_TIMEOUT_MS);
+}
+
+
 // the score gate is open while the gate port delivers a value above 0.5 -
 // BrainBay's AND object reports TRUE_VALUE (512) and INVALID_VALUE (-32767)
 static int flash_gate_open(FLASHOBJ *st)
@@ -433,6 +447,7 @@ static int flash_gate_open(FLASHOBJ *st)
 	int p = st->gateport;
 
 	if (p < 0 || p >= st->channels) return 0;
+	if (flash_data_stale(st)) return 0;            // device gone: never score
 	if (st->last_value[p] == INVALID_VALUE) return 0;
 	return (st->last_value[p] > 0.5f);
 }
@@ -458,28 +473,47 @@ static void flash_push_values(FLASHOBJ *st)
 
 		now = GetTickCount();
 
-		// keep alive clock: always runs, so In1In2InputModel never pauses
-		if (st->clocktick == 0 || now < st->clocktick) st->clocktick = now;
-		while ((LONG) (now - st->clocktick) >= st->clockms)
+		if (flash_data_stale(st))
 		{
-			st->clocktick += (DWORD) st->clockms;
-			st->heartbeat += 1.0;
-		}
+			// no samples: freeze the score and the keep alive clock. In1/In2 stop
+			// changing, which is exactly what pauses the In1In2InputModel.
+			st->clocktick = now;
+			st->scoretick = now;
 
-		// score: only grows while the gate port reports success
-		if (flash_gate_open(st))
-		{
-			if (st->scoretick == 0 || now < st->scoretick) st->scoretick = now;
-			while ((LONG) (now - st->scoretick) >= st->scorems)
+			if (!st->stale_reported)
 			{
-				st->scoretick += (DWORD) st->scorems;
-				st->score += 1.0;
+				st->stale_reported = 1;
+				write_logfile("Flash: no data for %d ms - puzzle paused (device disconnected?)",
+				              FLASH_DATA_TIMEOUT_MS);
 			}
 		}
 		else
 		{
-			// gate closed: do not bank the elapsed time, restart the interval
-			st->scoretick = now;
+			st->stale_reported = 0;
+
+			// keep alive clock: always runs, so In1In2InputModel never pauses
+			if (st->clocktick == 0 || now < st->clocktick) st->clocktick = now;
+			while ((LONG) (now - st->clocktick) >= st->clockms)
+			{
+				st->clocktick += (DWORD) st->clockms;
+				st->heartbeat += 1.0;
+			}
+
+			// score: only grows while the gate port reports success
+			if (flash_gate_open(st))
+			{
+				if (st->scoretick == 0 || now < st->scoretick) st->scoretick = now;
+				while ((LONG) (now - st->scoretick) >= st->scorems)
+				{
+					st->scoretick += (DWORD) st->scorems;
+					st->score += 1.0;
+				}
+			}
+			else
+			{
+				// gate closed: do not bank the elapsed time, restart the interval
+				st->scoretick = now;
+			}
 		}
 	}
 
@@ -850,6 +884,8 @@ FLASHOBJ::FLASHOBJ(int num) : BASE_CL()
 	heartbeat  = 0.0;
 	scoretick  = 0;
 	clocktick  = 0;
+	last_data_tick = 0;
+	stale_reported = 0;
 
 	ax_host      = NULL;
 	ax_container = NULL;
@@ -1034,6 +1070,7 @@ void FLASHOBJ::incoming_data(int port, float value)
 	// the timer thread only stores the value - the ActiveX control is written by
 	// the window timer in FlashWndHandler(), i.e. on the thread that owns it
 	last_value[port] = value;
+	last_data_tick   = GetTickCount();          // keeps the stale watchdog quiet
 }
 
 
@@ -1051,6 +1088,9 @@ void FLASHOBJ::session_start(void)
 	heartbeat = 0.0;
 	scoretick = 0;
 	clocktick = 0;
+	// a session without samples (device not connected) must not advance the game
+	last_data_tick = GetTickCount();
+	stale_reported = 0;
 
 	if (reload_req || ax_ctrl == NULL)
 	{
@@ -1078,6 +1118,8 @@ void FLASHOBJ::session_reset(void)
 	heartbeat = 0.0;
 	scoretick = 0;
 	clocktick = 0;
+	last_data_tick = 0;
+	stale_reported = 0;
 
 	request_stop();
 }

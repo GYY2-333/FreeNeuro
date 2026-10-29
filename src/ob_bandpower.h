@@ -87,6 +87,7 @@ class BANDPOWEROBJ : public BASE_CL
 	float	rawpow[BP_BANDS];		// unsmoothed band power (uV^2)
 	float	avgpow[BP_BANDS];		// smoothed band power (uV^2)
 	int		updates;				// number of spectra computed
+	DWORD	last_data_tick;			// GetTickCount() of the last sample that arrived
 	double	testphase1;				// phases of the internal test signal
 	double	testphase2;
 	double	testphase3;

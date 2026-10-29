@@ -149,6 +149,29 @@ src\brainBay.cpp                主窗口消息、IDM_PLAY/IDM_STOP、WM_SIZE �
    教训：想改这些窗口的“边框”，只画非客户区（WM_NCPAINT）永远安全；
         在客户区里填充/描边就可能盖住 ActiveX 子窗口
 
+7) 断开设备后：数值不清零、拼图继续跑（2026-10-28 修）
+   → 原因：整条信号链只在“有样本”时才被驱动（TimerProc → process_physioamp →
+      process_packets → objects[i]->work()）。设备一断就没有样本，各对象停在
+      最后一帧；而 Flash 对象的 drive 模式自己用 GetTickCount 计时：
+      In2（心跳）无条件每秒 +1、In1（计分）看闸门 last_value[gateport]（也停在旧值
+      TRUE_VALUE=512）→ 于是拼图永远走下去。
+   → 修法：给三个“展示类”对象各加一个“数据到达时间戳 + 超时看门狗”
+      (ob_flash / ob_threshold / ob_bandpower 的 *.h 各加 DWORD last_data_tick)
+      a. incoming_data() 里 last_data_tick = GetTickCount()
+      b. 判定：只有 GLOBAL.running（会话在跑）且 last_data_tick != 0 且
+         超过超时才认为“没数据”；超时 = Flash 1000 ms、仪表/频带面板 1500 ms
+      c. Flash：flash_data_stale() 为真时 flash_gate_open() 返回 0，
+         并且 flash_push_values() 冻结 clocktick/scoretick（In1/In2 不再变化）
+         → In1In2InputModel 自动 pause，电影停住；日志写一次
+         “Flash: no data for 1000 ms - puzzle paused (device disconnected?)”
+         session_start() 里把 last_data_tick 置为当前时间，所以“根本没接设备就
+         开始会话”也不会让拼图空转
+      d. 仪表（Meter_Class）与频带面板（BandPanel_Class）：窗口里加 500 ms 的
+         SetTimer 看门狗，超时就把 current_value/peak（仪表）或
+         avgpow/rawpow（频带）清零并 InvalidateRect，WM_DESTROY 里 KillTimer
+   → 注意：阈值/频带对象的“输出端口”值不会自己更新（没有样本就没有 work()），
+     所以 Flash 闸门必须在 Flash 自己这边判超时，不能依赖上游清零
+
 六、待办 / 下一步
 -------------------------------------------------------------------------------
 [ ] 阈值标定：按实测信号把 ATTENTION/DISTRACT/TENSION 调到可达范围，
@@ -157,6 +180,7 @@ src\brainBay.cpp                主窗口消息、IDM_PLAY/IDM_STOP、WM_SIZE �
 [ ] 电极端：确认原始波形正常（不应在 0~65535 间乱跳）
 [ ] brainBay.vcxproj 生成后事件限制为只在 Release 配置下复制到 bin
 [x] 控件展示窗口的边框美化（2026-10-27 完成，见 五.6）
+[x] 断开设备后界面不清零 / 拼图继续跑（2026-10-28 修好，见 五.7）
 [ ] Flash 面板进一步美化（如需）：仍只能在“不覆盖子窗口”的前提下做，
     参考上面 五.3) 的教训
 [ ] 若之后仍出现 Flash 错误页：先确认 bin\BrainBay.exe ≈ 4.13 MB（Release）

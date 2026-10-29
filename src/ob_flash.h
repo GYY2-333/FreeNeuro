@@ -93,6 +93,8 @@ class FLASHOBJ : public BASE_CL
 	double	heartbeat;					// keep alive counter     -> In2
 	DWORD	scoretick;					// GetTickCount() of the last point
 	DWORD	clocktick;					// GetTickCount() of the last tick
+	DWORD	last_data_tick;				// GetTickCount() of the last sample that arrived
+	int		stale_reported;				// "no data" was already written to the log
 
 	// ---- runtime state ---------------------------------------------------
 	void		  *ax_host;						// HWND of the control container

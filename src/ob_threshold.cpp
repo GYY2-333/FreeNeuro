@@ -625,10 +625,33 @@ static int threshold_meter_pos(THRESHOLDOBJ *st, float value)
 }
 
 
+// A disconnected device leaves the signal chain without samples: the graph is
+// not running any more, so the meter would keep the last value forever. Watch
+// the arrival of samples and zero the display once they stop.
+#define METER_WATCH_TIMER 0x4D31
+#define METER_WATCH_MS    500
+#define METER_DATA_TIMEOUT_MS 1500
+
+static int threshold_data_stale(THRESHOLDOBJ *st)
+{
+	if (!GLOBAL.running) return 0;                 // only while a session runs
+	if (st->last_data_tick == 0) return 0;         // no data seen yet
+	return ((LONG) (GetTickCount() - st->last_data_tick) > METER_DATA_TIMEOUT_MS);
+}
+
+
 LRESULT CALLBACK MeterWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {   
 	int t;
 	THRESHOLDOBJ * st;
+
+	// during WM_CREATE displayWnd is not stored in the object yet, so the watch
+	// timer has to be installed before the object is looked up below
+	if (message == WM_CREATE)
+	{
+		SetTimer(hWnd, METER_WATCH_TIMER, METER_WATCH_MS, NULL);
+		return 0;
+	}
 	
 	st=NULL;
 	for (t=0;(t<GLOBAL.objects)&&(st==NULL);t++)
@@ -640,7 +663,23 @@ LRESULT CALLBACK MeterWndHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 	if (st==NULL) return DefWindowProc( hWnd, message, wParam, lParam );
 	
 	switch( message ) 
-	{	case WM_DESTROY:
+	{	case WM_TIMER:
+			if (wParam == METER_WATCH_TIMER)
+			{
+				// device gone: show 0 instead of the frozen last value
+				if (threshold_data_stale(st))
+				{
+					st->input         = 0.0f;
+					st->current_value = 0.0f;
+					st->peak          = 0.0f;
+					st->redraw        = 1;
+					InvalidateRect(hWnd, NULL, TRUE);
+				}
+			}
+			break;
+
+		case WM_DESTROY:
+			KillTimer(hWnd, METER_WATCH_TIMER);
 		 break;
 		case WM_KEYDOWN:
 			// printf("keydown: %ld, %ld\n",lParam,wParam);
@@ -824,6 +863,7 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 		peak=0.0f;
 		peaktick=0;
 		decayms=3000;						// peak hold falls over the full range in 3 s
+		last_data_tick=0;
 
         
         clear_averagers();
@@ -1031,6 +1071,7 @@ THRESHOLDOBJ::THRESHOLDOBJ(int num) : BASE_CL()
 	  void THRESHOLDOBJ::incoming_data(int port, float value)
       {
   		  input=value;
+		  last_data_tick=GetTickCount();		// keeps the stale watchdog quiet
       }
 
 	  void THRESHOLDOBJ::work(void) 

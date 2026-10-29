@@ -256,11 +256,11 @@ adaptinterval=3000
 fontsize=10
 barsize=30
 color=7916860.000000
-bkcol=1574936.000000
+bkcol=1314832.000000
 fontcol=13812926.000000
-fontbkcol=918542.000000
+fontbkcol=2234906.000000
 decayms=3000
-wndcaption=ATTENTION  SMR 12-15 Hz >= 5 uV
+wndcaption=1 attention smr >= 5uV
 truemode=1
 falsemode=0
 numerictruevalue=1
@@ -314,11 +314,11 @@ adaptinterval=3000
 fontsize=10
 barsize=30
 color=16755270.000000
-bkcol=1574936.000000
+bkcol=1314832.000000
 fontcol=13812926.000000
-fontbkcol=918542.000000
+fontbkcol=2234906.000000
 decayms=3000
-wndcaption=DISTRACT  theta 4-8 Hz <= 20 uV
+wndcaption=2 distraction theta <= 20uV
 truemode=1
 falsemode=0
 numerictruevalue=1
@@ -372,11 +372,11 @@ adaptinterval=3000
 fontsize=10
 barsize=30
 color=15759535.000000
-bkcol=1574936.000000
+bkcol=1314832.000000
 fontcol=13812926.000000
-fontbkcol=918542.000000
+fontbkcol=2234906.000000
 decayms=3000
-wndcaption=TENSION  beta 22-30 Hz <= 20 uV
+wndcaption=3 tension beta <= 20uV
 truemode=1
 falsemode=0
 numerictruevalue=1
