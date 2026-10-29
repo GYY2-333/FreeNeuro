@@ -1,17 +1,88 @@
-/src/Debug
-/src/brainBay.vcxproj.user
+# ============================================================
+# BrainBay - files that are NOT part of the source tree
+# ============================================================
+
+# ---------- Visual Studio build output ----------
+/src/Debug/
+/src/Release/
+/src/x64/
+/src/Win32/
 /src/*.sdf
 /src/*.opensdf
+/src/*.aps
+/src/*.user
+/src/.vs/
+*.VC.db
+*.VC.VC.opendb
 *.ipch
 *.suo
-/src/Release
-/src/.vs/
-/src/*.aps
+*.ncb
+*.opt
+*.plg
+
+# ---------- Compiler / linker intermediates ----------
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.pch
+*.tlog
+*.lastbuildstate
+/src/*.res
+/src/*.exp
+/src/*.lib
+*vc142.pdb
+*.iobj
+*.ipdb
+*.cvtres
+
+# ---------- BrainBay runtime output ----------
 /bin/bbay.log
+/bin/brainbay.cfg.shot_backup
+/bin/brainbay_diag.exebbay.log
+/bin/brainbay_diag.exebrainbay.cfg
+
+# ---------- Local development scratch / probes / captures ----------
+/tools/_tmp/
+/tools/__pycache__/
+*.pyc
+/tools/flash_probe.exe
+/tools/flash_probe.obj
+/tools/flash_probe.log
+/tools/flash_probe.png
+/tools/shot_*.bmp
+/tools/shot_*.png
+/tools/bxd_all.txt
+/tools/bxd_dump.txt
+/tools/neuropuzzles_strings.txt
+
+# ---------- Installer output (regenerate with BrainBay_installer.nsi) ----------
+/Setup_BrainBay.exe
+/bin/BrainBay_old.exe
+/bin/BrainBay_prev.exe
+/bin/BrainBay_diag.exe
+/bin/BrainBay.exe.prev
+/bin/*.bak
+
+# ---------- Vendored sub-project build output ----------
+/lib/BioSemi/release/
+
+# ---------- Local screenshots used for design checking ----------
+/屏幕截图*.png
+
+# ---------- Editor / agent configuration (machine specific) ----------
+/.claude/settings.local.json
+/.claude/skills/codemap-*/
+/.claude/skills/code-index-*/
 .codemap/
 .codemaker/codemap/
 .codemaker/codeindex/
 .codemaker/rules/codemap.mdc
 .codemaker/mcps.json
-.claude/skills/codemap-*/
-.claude/skills/code-index-*/
+/src/.vscode/
+/.idea/
+
+# ---------- OS noise ----------
+Thumbs.db
+desktop.ini
+.DS_Store
